@@ -282,21 +282,24 @@ blockquote.postMessage {
 	text-decoration: underline;
 }
 
-/* Post form */
+/* === Post form (4chan exact) === */
 table.postForm {
 	border-spacing: 1px;
 	margin-left: auto;
 	margin-right: auto;
 }
 table.postForm > tbody > tr > td:first-child {
-	background-color: #eeaa88;
-	color: #800000;
+	background-color: #EA8;
+	color: #800;
 	font-weight: bold;
-	border: 1px solid #800000;
+	border: 1px solid #800;
 	padding: 0 5px;
 	font-size: 10pt;
-	text-align: right;
-	white-space: nowrap;
+}
+tr.rules td {
+	border: 0 !important;
+	background-color: transparent !important;
+	font-weight: normal !important;
 }
 table.postForm td {
 	margin: 0;
@@ -314,17 +317,20 @@ table.postForm textarea {
 	min-height: 120px;
 	resize: vertical;
 }
-table.postForm select {
-	width: 256px;
-}
 
 .postblock {
-	background-color: #eeaa88;
-	color: #800000;
+	background-color: #EA8;
+	color: #800;
 	font-weight: bold;
-	border: 1px solid #800000;
+	border: 1px solid #800;
 	padding: 0 5px;
 	font-size: 10pt;
+}
+
+#togglePostFormLink {
+	font-size: 22px;
+	font-weight: bold;
+	text-align: center;
 }
 
 .submit-btn {
@@ -335,18 +341,13 @@ table.postForm select {
 	font-family: arial, helvetica, sans-serif;
 	font-size: 10pt;
 	font-weight: bold;
-	background: #eeaa88;
-	color: #800000;
-	border: 1px solid #800000;
+	background: #EA8;
+	color: #800;
+	border: 1px solid #800;
 	cursor: pointer;
 }
-.submit-btn:hover {
-	background: #dd9977;
-}
-.submit-btn:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
+.submit-btn:hover { background: #DD9977; }
+.submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Page list */
 .pagelist {
@@ -445,7 +446,12 @@ table.postForm select {
 		max-width: 95%;
 		margin-left: 8px;
 	}
-	.blobchan-logo {
-		font-size: 16px;
+		.blobchan-logo { font-size: 16px; }
 	}
-}
+
+	.toggle-link {
+		background: none; border: none; color: #0000EE;
+		font-family: arial, helvetica, sans-serif; font-size: 10pt;
+		font-weight: bold; cursor: pointer; padding: 0;
+	}
+	.toggle-link:hover { color: #FF0000 !important; }

@@ -1,12 +1,43 @@
 ﻿<script lang="ts">
 	import { goto } from '$app/navigation';
 	import { getThreads } from '$lib/dummy.svelte.ts';
+	import { ephemeral } from '$lib/store.svelte.ts';
+	import { createEphemeralClient } from '$lib/ephemeral';
+	import { sendBlobPost } from '$lib/blob';
+	import { loadKZG } from '$lib/kzg';
 
 	const threads = getThreads();
 
-	function openThread(id: string) {
-		goto(`/thread/${id}`);
+	let showForm = $state(false);
+	let name = $state('Anonymous');
+	let subject = $state('');
+	let content = $state('');
+	let sending = $state(false);
+	let postError = $state('');
+	let postHash = $state('');
+
+	async function handlePost() {
+		if (!ephemeral.wallet || !content.trim() || sending) return;
+		sending = true; postError = ''; postHash = '';
+		try {
+			const kzg = await loadKZG();
+			const client = createEphemeralClient(ephemeral.wallet);
+			const hash = await sendBlobPost({
+				client, kzg,
+				post: {
+					board: 'blob', threadId: '',
+					subject: subject.trim() || undefined,
+					name: name.trim() || 'Anonymous',
+					content: content.trim(),
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+			});
+			postHash = hash; content = ''; subject = '';
+		} catch (e: any) { postError = e?.shortMessage || e?.message?.slice(0, 200) || 'Failed'; }
+		finally { sending = false; }
 	}
+
+	function openThread(id: string) { goto(`/thread/${id}`); }
 
 	function fmtDate(ts: number): string {
 		const d = new Date(ts * 1000);
@@ -36,12 +67,32 @@
 	</div>
 	<hr class="abovePostForm" />
 
-	<div class="boardNavDesktop">
-		[<a href="/">blob</a>]
-	</div>
-	<hr />
+			<!-- Post form (4chan style) -->
+			<div class="center" style="margin:8px 0">
+				{#if !showForm}
+					<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={() => showForm = true}>Start a New Thread</button>]</div>
+				{:else}
+					<div id="togglePostFormLink" class="desktop" style="margin-bottom:4px">[<button class="hand toggle-link" onclick={() => showForm = false}>- Hide Post Form -</button>]</div>
+					<table class="postForm" id="postForm" style="display:table">
+						<tbody>
+							<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={name} placeholder="Anonymous"></td></tr>
+							<tr data-type="Options"><td>Options</td><td><input name="email" type="text" placeholder=""></td></tr>
+							<tr data-type="Subject"><td>Subject</td><td><input name="sub" type="text" bind:value={subject} placeholder="(optional)"><input type="submit" value="Post" onclick={handlePost} disabled={sending}></td></tr>
+							<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={content}></textarea></td></tr>
+							<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts are stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
+						</tbody>
+					</table>
+					{#if postError}<div class="status-error">{postError}</div>{/if}
+					{#if postHash}<div class="status-success center">✓ Posted! <a href="https://sepolia.etherscan.io/tx/{postHash}" target="_blank" class="underline">View tx</a></div>{/if}
+				{/if}
+			</div>
 
-	<div class="board">
+			<div class="boardNavDesktop">
+				[<a href="/">blob</a>]
+			</div>
+			<hr />
+
+			<div class="board">
 		{#each threads as thread}
 			<div class="thread" id="t{thread.op.id.slice(2, 8)}">
 				<div class="postContainer opContainer" id="pc{thread.op.id.slice(2, 8)}">
@@ -116,17 +167,17 @@
 		{/each}
 	</div>
 
-	<hr />
 
-	<div class="boardNavDesktopFoot">
-		[<a href="/">blob</a>]
-	</div>
-	<div class="pagelist">
-		<strong><a href="/">{threads.length} thread{threads.length !== 1 ? 's' : ''}</a></strong>
-	</div>
-	<br style="clear:both" />
-</div>
 
-<div class="blobchan-footer" style="margin-top:20px">
-	All posts stored on Sepolia via EIP-4844 blobs. Blobs expire after ~18 days.
-</div>
+			<div class="boardNavDesktopFoot">
+				[<a href="/">blob</a>]
+			</div>
+			<div class="pagelist">
+				<strong><a href="/">{threads.length} thread{threads.length !== 1 ? 's' : ''}</a></strong>
+			</div>
+			<br style="clear:both" />
+		</div>
+
+		<div class="blobchan-footer" style="margin-top:20px">
+			All posts stored on Sepolia via EIP-4844 blobs. Blobs expire after ~18 days.
+		</div>
