@@ -6,23 +6,16 @@ import { BLOBCHAN_MARKER, BLOBCHAN_ADDRESS, ETHERSCAN_API_KEY, RPC_URL } from '.
 import type { Post, Thread } from './types';
 
 const BLOB_SIZE = 131072;
-const HEADER_SIZE = 2048;  // fixed header: JSON text, null-padded
-const IMG_START = HEADER_SIZE; // image starts right after header
-const IMG_MAX = BLOB_SIZE - HEADER_SIZE; // ~129KB for hex image → ~64KB raw
+const HEADER_SIZE = 2048;
+const IMG_START = HEADER_SIZE;
 const failedSlots = new Set<number>();
 
-// ---- Packing ----
-
-function packBlob(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, imageHex?: string): Uint8Array {
+function packBlob(post: Omit<Post, 'id' | 'blocknumber' | 'image'>, imageHex?: string): Uint8Array {
   const json = BLOBCHAN_MARKER + JSON.stringify(post);
   const blob = new Uint8Array(BLOB_SIZE);
-
-  // Write header (JSON text at offset 0, rest null-padded)
   const jsonBytes = new TextEncoder().encode(json);
   if (jsonBytes.length > HEADER_SIZE) throw new Error('Post text too long');
   blob.set(jsonBytes, 0);
-
-  // Write image hex at fixed offset (safe: hex chars are 0-9a-f, all < 0x74)
   if (imageHex) {
     const imgBytes = new TextEncoder().encode(imageHex);
     if (IMG_START + imgBytes.length > BLOB_SIZE) throw new Error('Image too large');
@@ -33,21 +26,18 @@ function packBlob(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, imageHex?: s
 
 export function deserializePost(data: Uint8Array, txHash: string, blockNumber?: number): Post | null {
   try {
-    // Read JSON from header (until null or end of header)
     let jsonEnd = data.indexOf(0, 0);
     if (jsonEnd === -1 || jsonEnd > HEADER_SIZE) jsonEnd = HEADER_SIZE;
     const raw = new TextDecoder().decode(data.slice(0, jsonEnd));
     if (!raw.startsWith(BLOBCHAN_MARKER)) return null;
-    const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as Post;
-
-    // Read hex image from fixed offset
+    const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as any;
     let imgHex = '';
-    for (let i = IMG_START; i < BLOB_SIZE && data[i] !== 0; i++) {
-      imgHex += String.fromCharCode(data[i]);
-    }
-    const image = imgHex.length > 0 ? hexToDataUrl(imgHex) : undefined;
-
-    return { ...p, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''), blockNumber, image, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
+    for (let i = IMG_START; i < BLOB_SIZE && data[i] !== 0; i++) imgHex += String.fromCharCode(data[i]);
+    const image = imgHex.length > 0 ? hexToDataUrl(imgHex) : (p.image || undefined);
+    return {
+      ...p, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''),
+      blockNumber, image, timestamp: p.timestamp || Math.floor(Date.now() / 1000),
+    };
   } catch { return null; }
 }
 
@@ -67,8 +57,6 @@ function dataUrlToHex(dataUrl: string): string {
   return hex;
 }
 
-// ---- Sending ----
-
 export async function sendBlobPost(args: {
   client: WalletClient<Transport, Chain, Account>;
   post: Omit<Post, 'id' | 'blockNumber' | 'image'>;
@@ -84,11 +72,12 @@ export async function sendBlobPost(args: {
   });
 }
 
-// ---- Reading ----
-
 export function groupIntoThreads(posts: Post[]): Thread[] {
   const ops = posts.filter(p => p.threadId === p.id);
-  return ops.map(op => ({ op, replies: posts.filter(p => p.threadId === op.id && p.id !== op.id) }));
+  return ops.map(op => ({
+    op,
+    replies: posts.filter(p => p.threadId === op.id && p.id !== op.id).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)),
+  }));
 }
 
 async function rpc(method: string, params: any[]) {
@@ -106,7 +95,7 @@ export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts
   try {
     const url = `https://api.etherscan.io/v2/api?chainid=11155111&module=account&action=txlist&address=${BLOBCHAN_ADDRESS}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${ETHERSCAN_API_KEY}`;
     const res = await fetch(url); const data = await res.json();
-    if (data.status !== '1' || !data.result) return { posts: [], isFresh: false };
+    if (data.status !== '1' || !data.result) { console.log('[blobchan] Etherscan: no results'); return { posts: [], isFresh: false }; }
 
     const posts: Post[] = []; let newPosts = 0; let skipped = 0;
     for (const tx of data.result) {
