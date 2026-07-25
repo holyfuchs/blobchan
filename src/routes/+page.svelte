@@ -6,6 +6,11 @@
 	import { createEphemeralClient } from '$lib/ephemeral';
 	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
+	import { processImage, dataUrlMime } from '$lib/image';
+	import { fmtDate, formatCountdown, countdownSeverity } from '$lib/format';
+	import { parseContent } from '$lib/content';
+	import { clock } from '$lib/time.svelte.ts';
+	import { BLOB_EXPIRY_SECONDS } from '$lib/config';
 
 	let threads = $derived(posts.threads);
 	let showForm = $state(false);
@@ -20,24 +25,15 @@
 
 	function toggleBlur(url: string) { if(unblurred.has(url)) unblurred.delete(url); else unblurred.add(url); unblurred = new Set(unblurred); }
 	function blurred(imgUrl: string) { return nsfw.on && !unblurred.has(imgUrl); }
+	/** Seconds until this post's blob is pruned (negative once expired). */
+	function expiryLeft(ts: number): number { return ts + BLOB_EXPIRY_SECONDS - Math.floor(clock.now / 1000); }
 
-	async function processImage(file: File): Promise<string> {
-		if (file.size < 60000) {
-			return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.onerror = () => reject(new Error('Failed')); r.readAsDataURL(file); });
-		}
-		return new Promise((resolve, reject) => {
-			const img = new Image();
-			img.onload = () => { const c=document.createElement('canvas'); const maxW=600; let w=img.width,h=img.height; if(w>maxW){h=h*maxW/w;w=maxW;} c.width=w;c.height=h; c.getContext('2d')!.drawImage(img,0,0,w,h); let q=0.6; let u=c.toDataURL('image/webp',q); while(u.length>120000&&q>0.15){q-=0.1;u=c.toDataURL('image/webp',q);} resolve(u); };
-			img.onerror = () => reject(new Error('Failed'));
-			img.src = URL.createObjectURL(file);
-		});
-	}
 	async function handleFileChange(e: Event) { const f=(e.target as HTMLInputElement).files?.[0]; if(!f)return; try{imageData=await processImage(f);}catch(e:any){postError='Image error: '+(e.message||'unknown');} }
 	async function handlePost() {
 		if(sending)return;
 		if(!ephemeral.wallet){postError="Generate a posting key first.";return;}
 		if(!content.trim()){postError="Write something first.";return;}
-		const postObj={board:'blob' as const,threadId:'',subject:subject.trim()||undefined,name:name.trim()||'Anonymous',content:content.trim(),timestamp:Math.floor(Date.now()/1000)};
+		const postObj={board:'blob' as const,threadId:'',subject:subject.trim()||undefined,name:name.trim()||'Anonymous',content:content.trim(),timestamp:Math.floor(Date.now()/1000),imageMime:imageData?dataUrlMime(imageData):undefined};
 		const bytes=postHeaderBytes(postObj);
 		if(bytes>POST_HEADER_LIMIT){postError=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		sending=true;postError='';postHash='';
@@ -51,7 +47,6 @@
 		}catch(e:any){postError=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{sending=false;}
 	}
 	function openThread(id: string) { goto('/thread/'+id); }
-	function fmtDate(ts:number){const d=new Date(ts*1000);const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];return d.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'})+'('+days[d.getDay()]+')'+d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}
 </script>
 
 <svelte:head><title>/blob/ - On-chain - blobchan</title></svelte:head>
@@ -88,23 +83,24 @@
 						<div class="postInfo desktop">
 							{#if thread.op.subject}<span class="subject">{thread.op.subject} </span>{/if}
 							<span class="nameBlock"><span class="name">{thread.op.name}</span></span><span class="dateTime">{fmtDate(thread.op.timestamp)}</span>&nbsp;
-							<span class="postNum desktop"><a href="/thread/{thread.op.id}">No.</a><a href="/thread/{thread.op.id}">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink hand" href="/thread/{thread.op.id}">Reply</a>]</span></span>
+							<span class="postNum desktop"><a href="/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}">No.</a><a href="/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink hand" href="/thread/{thread.op.id}">Reply</a>]</span></span>
+							<span class="countdown {countdownSeverity(expiryLeft(thread.op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(thread.op.timestamp))}">⏳ {formatCountdown(expiryLeft(thread.op.timestamp))}</span>
 						</div>
 						{#if thread.op.image}
 							<div class="file"><a class="fileThumb"><img src={thread.op.image} alt="post image" style="max-width:200px;max-height:200px;cursor:pointer;{blurred(thread.op.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(thread.op.image)} loading="lazy" /></a></div>
 						{/if}
-						<blockquote class="postMessage">{#each thread.op.content.split('\n') as line}<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
+							<blockquote class="postMessage">{#each thread.op.content.split('\n') as line}{@const isQuote=line.startsWith('>')}{@const segs=parseContent(line)}<span class={isQuote?'quote':''}>{#each segs as seg}{#if seg.ref}<a class="quotelink" href="/thread/{thread.op.id}#p{seg.ref}">{seg.text}</a>{:else}{seg.text||'\u00A0'}{/if}{/each}{'\n'}</span>{/each}</blockquote>
 					</div></div>
 					{#each thread.replies.slice(0,3) as reply}
 						<div class="postContainer replyContainer"><div class="sideArrows">&gt;&gt;</div><div class="post reply">
-							<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span><span class="dateTime">{fmtDate(reply.timestamp)}</span>&nbsp;<span class="postNum desktop"><a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">No.</a><a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">{reply.id.slice(2,8)}</a></span></div>
+							<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span><span class="dateTime">{fmtDate(reply.timestamp)}</span>&nbsp;<span class="postNum desktop"><a href="/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}">No.</a><a href="/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}">{reply.id.slice(2,8)}</a></span></div>
 							{#if reply.image}
 								<div class="file"><a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:125px;max-height:125px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a></div>
 							{/if}
-							<blockquote class="postMessage">{#each reply.content.split('\n') as line}<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
+								<blockquote class="postMessage">{#each reply.content.split('\n') as line}{@const isQuote=line.startsWith('>')}{@const segs=parseContent(line)}<span class={isQuote?'quote':''}>{#each segs as seg}{#if seg.ref}<a class="quotelink" href="/thread/{thread.op.id}#p{seg.ref}">{seg.text}</a>{:else}{seg.text||'\u00A0'}{/if}{/each}{'\n'}</span>{/each}</blockquote>
 						</div></div>
 					{/each}
-					{#if thread.replies.length>3}<span class="summary desktop">{thread.replies.length-3} repl{thread.replies.length-3===1?'y':'ies'} omitted. <a class="replylink hand" href="/thread/{thread.op.id}">Click here</a> to view.</span>{:else if thread.replies.length>0}<span class="summary desktop"><a class="replylink hand" href="/thread/{thread.op.id}">Click here</a> to view all replies.</span>{/if}
+					{#if thread.replies.length>3}{@const omitted=thread.replies.length-3}{@const omittedImgs=thread.replies.slice(3).filter(r=>r.image).length}<span class="summary desktop">{omitted} repl{omitted===1?'y':'ies'}{omittedImgs>0 ? ` and ${omittedImgs} image${omittedImgs===1?'':'s'}` : ''} omitted. <a class="replylink hand" href="/thread/{thread.op.id}">Click here</a> to view.</span>{:else}<span class="summary desktop"><a class="replylink hand" href="/thread/{thread.op.id}">Click here</a> to view.</span>{/if}
 				</div>
 			{/each}
 		{/if}

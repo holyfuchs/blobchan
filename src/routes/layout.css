@@ -282,6 +282,49 @@ blockquote.postMessage {
 	text-decoration: underline;
 }
 
+/* Highlighted post (jump target from a quotelink) */
+.post.op.highlight {
+	background: #f0c0b0;
+}
+
+/* Blob expiry countdown shown next to each post */
+.countdown {
+	font-size: 9pt;
+	color: #707070;
+	margin-left: 6px;
+	white-space: nowrap;
+}
+.countdown.soon { color: #cc6600; }
+.countdown.critical { color: #cc0000; font-weight: bold; }
+.countdown.expired { color: #cc0000; font-weight: bold; text-decoration: line-through; }
+
+/* Floating preview shown when hovering a `>>HASH` quotelink */
+.post-preview {
+	position: fixed;
+	z-index: 100;
+	background: #f0e0d6;
+	border: 1px solid #d9bfb7;
+	padding: 4px 6px;
+	max-width: 320px;
+	font-size: 10pt;
+	pointer-events: none;
+	box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15);
+}
+.post-preview .postInfo {
+	font-size: 9pt;
+	margin-bottom: 2px;
+}
+.post-preview .postMessage {
+	font-size: 9pt;
+	max-height: 200px;
+	overflow: hidden;
+	white-space: pre-wrap;
+}
+.post-preview img {
+	display: block;
+	margin: 2px 0;
+}
+
 /* === Post form (4chan exact) === */
 table.postForm {
 	border-spacing: 1px;

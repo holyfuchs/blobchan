@@ -31,7 +31,8 @@ function packBlob(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, imageHex?: s
   blob.set(jsonBytes, 0);
   if (imageHex) {
     const imgBytes = new TextEncoder().encode(imageHex);
-    if (IMG_START + imgBytes.length > BLOB_SIZE) throw new Error('Image too large');
+    const maxImgBytes = BLOB_SIZE - IMG_START;
+    if (imgBytes.length > maxImgBytes) throw new Error(`Image too large (${imgBytes.length}/${maxImgBytes} bytes)`);
     blob.set(imgBytes, IMG_START);
   }
   return blob;
@@ -46,16 +47,16 @@ export function deserializePost(data: Uint8Array, txHash: string, blockNumber?: 
     const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as any;
     let imgHex = '';
     for (let i = IMG_START; i < BLOB_SIZE && data[i] !== 0; i++) imgHex += String.fromCharCode(data[i]);
-    const image = imgHex.length > 0 ? hexToDataUrl(imgHex) : (p.image || undefined);
+    const image = imgHex.length > 0 ? hexToDataUrl(imgHex, p.imageMime) : (p.image || undefined);
     return { ...p, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''), blockNumber, image, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
   } catch { return null; }
 }
 
-function hexToDataUrl(hex: string): string {
+function hexToDataUrl(hex: string, mime: string = 'image/webp'): string {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   let b = ''; for (let i = 0; i < bytes.length; i++) b += String.fromCharCode(bytes[i]);
-  return 'data:image/webp;base64,' + btoa(b);
+  return `data:${mime};base64,${btoa(b)}`;
 }
 
 function dataUrlToHex(u: string): string {

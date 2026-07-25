@@ -6,6 +6,10 @@ export interface Post {
   name: string;
   content: string;
   image?: string;
+  /** MIME type of the stored image (e.g. `image/webp`, `image/png`). Stored
+   *  in the blob header so reads reconstruct the data URL with the right MIME.
+   *  Older posts without this field fall back to `image/webp`. */
+  imageMime?: string;
   timestamp: number;
   blockNumber?: number;
 }
