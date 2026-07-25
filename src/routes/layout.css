@@ -534,6 +534,17 @@ table.postForm textarea {
 	white-space: nowrap;
 }
 
+/* Actual per-post tx cost shown next to post info, links to Etherscan */
+.tx-cost {
+	font-size: 9pt;
+	color: #707070;
+	margin-left: 6px;
+	white-space: nowrap;
+	text-decoration: underline;
+}
+.tx-cost:visited { color: #707070; }
+.tx-cost:hover { color: #ff0000 !important; }
+
 .tx-link {
 	font-family: monospace;
 	font-size: 9pt;

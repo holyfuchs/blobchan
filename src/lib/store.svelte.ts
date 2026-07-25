@@ -9,6 +9,7 @@ import {
 	getEphemeralAddress
 } from './ephemeral';
 import { CHAINS, type ChainConfig } from './config';
+import { estimatePostCost } from './blob';
 import type { EphemeralWallet } from './types';
 
 // ---- Account state ----
@@ -23,6 +24,11 @@ export const account = {
 let ephemeralWallet = $state<EphemeralWallet | null>(typeof window !== 'undefined' ? loadEphemeralWallet() : null);
 /** Per-chain balances: { sep: bigint|null, m: bigint|null } */
 let balances = $state<Record<string, bigint | null>>({});
+/** Per-chain estimated post costs in wei, fetched from current base fees. */
+let costEstimates = $state<Record<string, bigint | null>>({});
+/** Current ETH price in USD, for displaying approximate $ cost per post.
+ *  Fetched from Coingecko's free API, refreshed every 5 minutes. */
+let ethPriceUsd = $state<number | null>(null);
 let fundingHash = $state<string | null>(null);
 let fundingLoading = $state(false);
 
@@ -38,6 +44,16 @@ export const ephemeral = {
 	hasFundsFor(chain: ChainConfig): boolean {
 		const b = balances[chain.id];
 		return b !== null && b !== undefined && b >= chain.ephemeralMinBalance;
+	},
+	/** Realistic per-post cost estimate (wei) for a chain, or null if not yet
+	 *  fetched. Falls back to null when the RPC couldn't provide base fees. */
+	costEstimateFor(chain: ChainConfig): bigint | null {
+		return costEstimates[chain.id] ?? null;
+	},
+	/** Current ETH price in USD for approximate $ display, or null if not yet
+	 *  fetched. */
+	get ethPriceUsd(): number | null {
+		return ethPriceUsd;
 	},
 	get fundingHash() {
 		return fundingHash;
@@ -92,7 +108,31 @@ function refreshBalance(chain: ChainConfig) {
 }
 
 function refreshAllBalances() {
-	for (const chain of Object.values(CHAINS)) refreshBalance(chain);
+	for (const chain of Object.values(CHAINS)) {
+		refreshBalance(chain);
+		refreshCostEstimate(chain);
+	}
+	refreshEthPrice();
+}
+
+async function refreshCostEstimate(chain: ChainConfig) {
+	try {
+		const cost = await estimatePostCost(chain);
+		costEstimates = { ...costEstimates, [chain.id]: cost };
+	} catch {
+		// leave the previous estimate in place if the fetch fails
+	}
+}
+
+/** Fetch current ETH price in USD from Coingecko's free API (no key needed). */
+async function refreshEthPrice() {
+	try {
+		const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+		const data = await res.json();
+		ethPriceUsd = data?.ethereum?.usd ?? null;
+	} catch {
+		// leave the previous price in place
+	}
 }
 
 if (typeof window !== 'undefined') {

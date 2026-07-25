@@ -6,7 +6,6 @@
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { formatEther } from 'viem';
 	import { CHAINS } from '$lib/config';
-	import { estimatePostCost } from '$lib/blob';
 
 	let { children } = $props();
 
@@ -21,12 +20,15 @@
 		Object.values(CHAINS).find(c => $page.url.pathname.startsWith('/' + c.id)) ?? CHAINS.sep
 	);
 
-	/** Max cost (in ETH, truncated) of a single blob post on the active chain. */
-	let postCost = $derived(formatEther(estimatePostCost()).slice(0, 8));
+	/** Realistic per-post cost (ETH) on the active chain, fetched from current
+	 *  base fees. Null while the estimate is loading or if the RPC failed. */
+	let postCostWei = $derived(ephemeral.costEstimateFor(activeChain));
+	let postCost = $derived(postCostWei !== null ? formatEther(postCostWei).slice(0, 8) : '...');
 	/** Whether the ephemeral key has enough balance for at least one post. */
 	let canPost = $derived(
+		postCostWei !== null &&
 		ephemeral.balanceFor(activeChain) !== null &&
-		(ephemeral.balanceFor(activeChain) || 0n) >= estimatePostCost()
+		(ephemeral.balanceFor(activeChain) || 0n) >= postCostWei
 	);
 
 	function doImport() {

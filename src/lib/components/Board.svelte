@@ -5,13 +5,13 @@
 	import { ephemeral, fundEphemeral } from '$lib/store.svelte.ts';
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { createEphemeralClient } from '$lib/ephemeral';
-	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT, estimatePostCost } from '$lib/blob';
+	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
 	import { processImage, dataUrlMime } from '$lib/image';
 	import { fmtDate, isoDatetime, formatCountdown, countdownSeverity } from '$lib/format';
 	import { parseContent } from '$lib/content';
 	import { clock } from '$lib/time.svelte.ts';
-	import { getChain, type ChainConfig } from '$lib/config';
+	import { getChain } from '$lib/config';
 	import { loadDims, dataSize, formatSize, mimeExt } from '$lib/imageinfo.svelte.ts';
 
 	let { chainId }: { chainId: string } = $props();
@@ -38,7 +38,19 @@
 	function fileName(p: { id: string; imageName?: string; imageMime?: string }) { return p.imageName || ('blob' + p.id.slice(2,8) + '.' + mimeExt(p.imageMime)); }
 	function expiryLeft(ts: number): number { return ts + chain.blobExpirySeconds - Math.floor(clock.now / 1000); }
 	function etherscanUrl(hash: string): string {
-		return `https://${chain.id === 'm' ? 'etherscan' : 'sepolia'}.etherscan.io/tx/${hash}`;
+		const sub = chain.id === 'm' ? '' : 'sepolia.';
+		return `https://${sub}etherscan.io/tx/${hash}`;
+	}
+	/** Format a post's actual tx cost (wei string) as "0.0001 ETH ($0.34)" for
+	 *  display next to the post info. Returns empty string if no cost data. */
+	function fmtTxCost(p: { id: string; txCost?: string }): string {
+		if (!p.txCost) return '';
+		const eth = formatEther(BigInt(p.txCost));
+		const price = ephemeral.ethPriceUsd;
+		if (price && price > 0) {
+			return `$${(parseFloat(eth) * price).toFixed(2)}`;
+		}
+		return `${parseFloat(eth).toFixed(6).replace(/\.?0+$/, '')} ETH`;
 	}
 
 	async function handleFileChange(e: Event) { const f=(e.target as HTMLInputElement).files?.[0]; if(!f)return; imageName=f.name; try{imageData=await processImage(f);}catch(e:any){postError='Image error: '+(e.message||'unknown');} }
@@ -47,7 +59,7 @@
 		if(!ephemeral.wallet){postError="Generate a posting key first.";return;}
 		if(!content.trim()){postError="Write something first.";return;}
 		const postObj={board:chain.id as const,threadId:'',subject:subject.trim()||undefined,name:name.trim()||'Anonymous',content:content.trim(),timestamp:Math.floor(Date.now()/1000),imageMime:imageData?dataUrlMime(imageData):undefined,imageName:imageData?imageName:undefined};
-		const bytes=postHeaderBytes(postObj);
+		const bytes=postHeaderBytes(postObj, !!imageData);
 		if(bytes>POST_HEADER_LIMIT){postError=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		sending=true;postError='';postHash='';
 		try{
@@ -60,15 +72,14 @@
 		}catch(e:any){postError=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{sending=false;}
 	}
 	function openThread(id: string) { goto(`/${chain.id}/thread/${id}`); }
-	let postCost = $derived(formatEther(estimatePostCost()).slice(0, 8));
-	/** How much ETH the ephemeral key still needs to afford one post on this chain. */
-	let deficit = $derived(calcDeficit(chain, ephemeral.balanceFor(chain)));
+	let postCostWei = $derived(ephemeral.costEstimateFor(chain));
+	let postCost = $derived(postCostWei !== null ? formatEther(postCostWei).slice(0, 8) : '...');
+	let deficit = $derived(calcDeficit(postCostWei, ephemeral.balanceFor(chain)));
 	let deficitEth = $derived(deficit > 0n ? formatEther(deficit).slice(0, 8) : '');
 	let needFunds = $derived(deficit > 0n && ephemeral.wallet !== null);
 
-	function calcDeficit(chain: ChainConfig, balance: bigint | null): bigint {
-		const cost = estimatePostCost();
-		if (balance === null || balance >= cost) return 0n;
+	function calcDeficit(cost: bigint | null, balance: bigint | null): bigint {
+		if (cost === null || balance === null || balance >= cost) return 0n;
 		return cost - balance;
 	}
 </script>
@@ -120,15 +131,17 @@
 								<span class="nameBlock"><span class="name">{thread.op.name}</span></span> <span class="dateTime" data-utc={thread.op.timestamp}><time datetime={isoDatetime(thread.op.timestamp)}>{fmtDate(thread.op.timestamp)}</time></span>&nbsp;
 								<span class="postNum desktop"><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Link to this post">No.</a><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Reply to this post">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink" href="/{chain.id}/thread/{thread.op.id}">Reply</a>]</span></span>
 								<span class="countdown {countdownSeverity(expiryLeft(thread.op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(thread.op.timestamp))}">⏳ {formatCountdown(expiryLeft(thread.op.timestamp))}</span>
+								{#if thread.op.txCost}<a href={etherscanUrl('0x'+thread.op.id)} target="_blank" class="tx-cost" title="Actual transaction cost">tx {fmtTxCost(thread.op)}</a>{/if}
 							</div>
-							<blockquote class="postMessage">{#each thread.op.content.split('\n') as line}{@const isQuote=line.startsWith('>')}{@const segs=parseContent(line)}<span class={isQuote?'quote':''}>{#each segs as seg}{#if seg.ref}<a class="quotelink" href="/{chain.id}/thread/{thread.op.id}#p{seg.ref}">{seg.text}</a>{:else}{seg.text||'\u00A0'}{/if}{/each}{'\n'}</span>{/each}</blockquote>
-						{:else}
-							<div class="postInfo desktop">
-								{#if thread.op.subject}<span class="subject">{thread.op.subject} </span>{/if}
-								<span class="nameBlock"><span class="name">{thread.op.name}</span></span> <span class="dateTime" data-utc={thread.op.timestamp}><time datetime={isoDatetime(thread.op.timestamp)}>{fmtDate(thread.op.timestamp)}</time></span>&nbsp;
-								<span class="postNum desktop"><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Link to this post">No.</a><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Reply to this post">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink" href="/{chain.id}/thread/{thread.op.id}">Reply</a>]</span></span>
-								<span class="countdown {countdownSeverity(expiryLeft(thread.op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(thread.op.timestamp))}">⏳ {formatCountdown(expiryLeft(thread.op.timestamp))}</span>
-							</div>
+								<blockquote class="postMessage">{#each thread.op.content.split('\n') as line}{@const isQuote=line.startsWith('>')}{@const segs=parseContent(line)}<span class={isQuote?'quote':''}>{#each segs as seg}{#if seg.ref}<a class="quotelink" href="/{chain.id}/thread/{thread.op.id}#p{seg.ref}">{seg.text}</a>{:else}{seg.text||'\u00A0'}{/if}{/each}{'\n'}</span>{/each}</blockquote>
+							{:else}
+								<div class="postInfo desktop">
+									{#if thread.op.subject}<span class="subject">{thread.op.subject} </span>{/if}
+									<span class="nameBlock"><span class="name">{thread.op.name}</span></span> <span class="dateTime" data-utc={thread.op.timestamp}><time datetime={isoDatetime(thread.op.timestamp)}>{fmtDate(thread.op.timestamp)}</time></span>&nbsp;
+									<span class="postNum desktop"><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Link to this post">No.</a><a href="/{chain.id}/thread/{thread.op.id}?replyto={thread.op.id.slice(2,8)}" title="Reply to this post">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink" href="/{chain.id}/thread/{thread.op.id}">Reply</a>]</span></span>
+									<span class="countdown {countdownSeverity(expiryLeft(thread.op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(thread.op.timestamp))}">⏳ {formatCountdown(expiryLeft(thread.op.timestamp))}</span>
+									{#if thread.op.txCost}<a href={etherscanUrl('0x'+thread.op.id)} target="_blank" class="tx-cost" title="Actual transaction cost">tx {fmtTxCost(thread.op)}</a>{/if}
+								</div>
 						{/if}
 					</div></div>
 					{#if !isCollapsed(thread.op.id)}
@@ -140,7 +153,7 @@
 									<a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:125px;max-height:125px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a>
 								{/if}
 								<div class="replyBody">
-									<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span> <span class="dateTime" data-utc={reply.timestamp}><time datetime={isoDatetime(reply.timestamp)}>{fmtDate(reply.timestamp)}</time></span>&nbsp;<span class="postNum desktop"><a href="/{chain.id}/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}" title="Link to this post">No.</a><a href="/{chain.id}/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}" title="Reply to this post">{reply.id.slice(2,8)}</a></span></div>
+									<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span> <span class="dateTime" data-utc={reply.timestamp}><time datetime={isoDatetime(reply.timestamp)}>{fmtDate(reply.timestamp)}</time></span>&nbsp;<span class="postNum desktop"><a href="/{chain.id}/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}" title="Link to this post">No.</a><a href="/{chain.id}/thread/{thread.op.id}?replyto={reply.id.slice(2,8)}#p{reply.id.slice(2,8)}" title="Reply to this post">{reply.id.slice(2,8)}</a></span>{#if reply.txCost}<a href={etherscanUrl('0x'+reply.id)} target="_blank" class="tx-cost" title="Actual transaction cost">tx {fmtTxCost(reply)}</a>{/if}</div>
 									<blockquote class="postMessage">{#each reply.content.split('\n') as line}{@const isQuote=line.startsWith('>')}{@const segs=parseContent(line)}<span class={isQuote?'quote':''}>{#each segs as seg}{#if seg.ref}<a class="quotelink" href="/{chain.id}/thread/{thread.op.id}#p{seg.ref}">{seg.text}</a>{:else}{seg.text||'\u00A0'}{/if}{/each}{'\n'}</span>{/each}</blockquote>
 								</div>
 							</div></div>

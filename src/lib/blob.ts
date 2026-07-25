@@ -1,6 +1,6 @@
 import {
   type WalletClient, type Transport, type Chain, type Account,
-  type Hex, parseGwei, bytesToHex,
+  type Hex, parseGwei, bytesToHex, createPublicClient, http,
 } from 'viem';
 import { BLOBCHAN_MARKER, ETHERSCAN_API_KEY, type ChainConfig } from './config';
 import type { Post, Thread } from './types';
@@ -19,13 +19,22 @@ const USABLE_BYTES = FIELD_ELEMENTS * USABLE_BYTES_PER_ELEMENT; // 126976 — pa
 const HEADER_SIZE = 2048; // max JSON header in payload bytes
 const IMG_START = HEADER_SIZE;
 
-/** Gas settings for EIP-4844 blob transactions. Kept as named constants so the
- *  cost estimator and `sendBlobPost` can never drift. */
+/** Gas settings for EIP-4844 blob transactions. The MAX_* constants are
+ *  fallbacks used when we can't fetch current base fees — in normal operation
+ *  `sendBlobPost` fetches live base fees and sets caps with a 2× margin so the
+ *  wallet's balance check doesn't require the user to hold 100× the actual cost. */
 const MAX_FEE_PER_GAS_GWEI = 50n;
 const MAX_PRIORITY_FEE_PER_GAS_GWEI = 2n;
 const MAX_FEE_PER_BLOB_GAS_GWEI = 30n;
 const BLOB_GAS_PER_BLOB = 131072n; // 2^17, fixed by EIP-4845
 const ESTIMATED_EXEC_GAS = 21000n; // plain send to an EOA, no calldata
+/** Multiplier applied to current base fees when setting max-fee caps. 2× gives
+ *  headroom for short-term fee spikes without requiring a huge balance. */
+const FEE_MARGIN_MULTIPLIER = 2n;
+/** Hard floors for max-fee caps so we don't underprice in edge cases (e.g. an
+ *  RPC that reports 0 base fee). In gwei. */
+const MIN_MAX_FEE_PER_GAS_GWEI = 5n;
+const MIN_MAX_FEE_PER_BLOB_GAS_GWEI = 2n;
 
 /** Maximum UTF-8 byte size of the serialized post JSON (including the `BLOBCHAN:` marker). */
 export const POST_HEADER_LIMIT = HEADER_SIZE;
@@ -63,14 +72,24 @@ function decodeBlob(blob: Uint8Array): Uint8Array {
  * Computes the UTF-8 byte length the post header will occupy inside the blob,
  * using the same serialization as `packBlob`. Use this in the UI to validate
  * before submitting, so the user gets a friendly error instead of a thrown one.
+ *
+ * Note: `packBlob` adds an `imageLen` field to the JSON when an image is
+ * present. We account for that here so the check matches the actual serialized
+ * size (worst case: `,"imageLen":124928` = 16 bytes).
  */
-export function postHeaderBytes(post: Omit<Post, 'id' | 'blockNumber' | 'image'>): number {
-  const json = BLOBCHAN_MARKER + JSON.stringify(post);
-  return new TextEncoder().encode(json).length;
+export function postHeaderBytes(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, hasImage = false): number {
+  const p = hasImage ? { ...post, imageLen: 0 } : post;
+  const json = BLOBCHAN_MARKER + JSON.stringify(p);
+  // +16 bytes worst case for the imageLen value (up to 6 digits)
+  return new TextEncoder().encode(json).length + (hasImage ? 16 : 0);
 }
 
 function packBlob(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, imageBytes?: Uint8Array): Uint8Array {
-  const json = BLOBCHAN_MARKER + JSON.stringify(post);
+  // Store the image byte length in the JSON header so the reader can extract
+  // exactly that many bytes — binary image data contains 0x00 bytes naturally,
+  // so we can't rely on a zero terminator like the old hex format did.
+  const postWithLen = imageBytes ? { ...post, imageLen: imageBytes.length } : post;
+  const json = BLOBCHAN_MARKER + JSON.stringify(postWithLen);
   const jsonBytes = new TextEncoder().encode(json);
   if (jsonBytes.length > HEADER_SIZE) throw new Error(`Post text too long (${jsonBytes.length}/${HEADER_SIZE} bytes)`);
   const payload = new Uint8Array(USABLE_BYTES);
@@ -100,13 +119,24 @@ export function deserializePost(data: Uint8Array, txHash: string, blockNumber?: 
     const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as any;
 
     if (isNewFormat) {
-      // New format: raw binary image bytes from IMG_START to first zero byte.
-      let imgEnd = IMG_START;
-      const limit = Math.min(payload.length, USABLE_BYTES);
-      while (imgEnd < limit && payload[imgEnd] !== 0) imgEnd++;
-      const imgBytes = payload.slice(IMG_START, imgEnd);
+      // New format: raw binary image bytes, length from the JSON header's
+      // `imageLen` field. We can't scan for a zero byte because binary image
+      // data contains 0x00 naturally. Falls back to zero-terminator scan for
+      // posts written before the imageLen field was added.
+      const imgLen = typeof p.imageLen === 'number' ? p.imageLen : -1;
+      let imgBytes: Uint8Array;
+      if (imgLen >= 0) {
+        imgBytes = payload.slice(IMG_START, IMG_START + imgLen);
+      } else {
+        let imgEnd = IMG_START;
+        const limit = Math.min(payload.length, USABLE_BYTES);
+        while (imgEnd < limit && payload[imgEnd] !== 0) imgEnd++;
+        imgBytes = payload.slice(IMG_START, imgEnd);
+      }
       const image = imgBytes.length > 0 ? bytesToDataUrl(imgBytes, p.imageMime) : (p.image || undefined);
-      return { ...p, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''), blockNumber, image, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
+      // Don't expose imageLen on the Post — it's a serialization detail.
+      const { imageLen, ...rest } = p;
+      return { ...rest, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''), blockNumber, image, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
     } else {
       // Old format: hex-encoded image string from IMG_START to first zero byte.
       let imgHex = '';
@@ -153,22 +183,62 @@ export async function sendBlobPost(args: {
   if (!blobHex.startsWith('0x') || blobHex.length !== 2 + BLOB_SIZE * 2) {
     throw new Error(`sendBlobPost: blob hex malformed (len=${blobHex.length})`);
   }
+
+  // Fetch current base fees and set max-fee caps with a 2× margin. This keeps
+  // the wallet's balance check reasonable — using the hardcoded MAX_* constants
+  // (50 gwei exec / 30 gwei blob) would require the user to hold ~0.005 ETH
+  // even when actual fees are ~0.00004 ETH. With live base fees + 2× margin,
+  // the required balance tracks reality.
+  let maxFeePerGas = parseGwei(MAX_FEE_PER_GAS_GWEI.toString());
+  let maxFeePerBlobGas = parseGwei(MAX_FEE_PER_BLOB_GAS_GWEI.toString());
+  const priorityFee = parseGwei(MAX_PRIORITY_FEE_PER_GAS_GWEI.toString());
+  try {
+    const pubClient = createPublicClient({ chain: chain.viemChain, transport: http(chain.rpcUrl) });
+    const [blobBaseFee, gasPrice] = await Promise.all([
+      pubClient.getBlobBaseFee(),
+      pubClient.getGasPrice(),
+    ]);
+    // maxFeePerGas = (base fee + priority fee) × margin, with a floor.
+    const computedExec = (gasPrice + priorityFee) * FEE_MARGIN_MULTIPLIER;
+    const minExec = parseGwei(MIN_MAX_FEE_PER_GAS_GWEI.toString());
+    maxFeePerGas = computedExec > minExec ? computedExec : minExec;
+    // maxFeePerBlobGas = blob base fee × margin, with a floor.
+    const computedBlob = blobBaseFee * FEE_MARGIN_MULTIPLIER;
+    const minBlob = parseGwei(MIN_MAX_FEE_PER_BLOB_GAS_GWEI.toString());
+    maxFeePerBlobGas = computedBlob > minBlob ? computedBlob : minBlob;
+  } catch {
+    // Fall back to the hardcoded caps if the RPC can't provide base fees.
+  }
+
   return await client.sendTransaction({
     to: chain.blobchanAddress, blobs: [blobHex], kzg, type: 'eip4844' as any,
-    maxFeePerBlobGas: parseGwei(MAX_FEE_PER_BLOB_GAS_GWEI.toString()),
-    maxFeePerGas: parseGwei(MAX_FEE_PER_GAS_GWEI.toString()),
-    maxPriorityFeePerGas: parseGwei(MAX_PRIORITY_FEE_PER_GAS_GWEI.toString()),
-    value: 0n,
+    maxFeePerBlobGas, maxFeePerGas, maxPriorityFeePerGas: priorityFee, value: 0n,
   });
 }
 
-/** Estimates the max cost (in wei) of a single blob post on the given chain,
- *  using the same gas settings as `sendBlobPost`. This is the worst-case cost
- *  — actual fees may be lower if the blob base fee is below the max. */
-export function estimatePostCost(): bigint {
-  const execGas = ESTIMATED_EXEC_GAS * MAX_FEE_PER_GAS_GWEI; // gwei
-  const blobGas = BLOB_GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS_GWEI; // gwei
-  return (execGas + blobGas) * 1_000_000_000n; // gwei → wei
+/** Estimates the realistic cost (in wei) of a single blob post on the given
+ *  chain by querying the chain's current base fees. The max-fee caps in
+ *  `sendBlobPost` are safety ceilings — the user actually pays the current
+ *  base fee, which is typically far lower (e.g. ~0.3 gwei blob base fee on
+ *  mainnet). Falls back to the max-fee estimate if the RPC can't provide base
+ *  fees, so the UI never shows a stale or missing number. */
+export async function estimatePostCost(chain: ChainConfig): Promise<bigint> {
+  try {
+    const client = createPublicClient({ chain: chain.viemChain, transport: http(chain.rpcUrl) });
+    const [blobBaseFee, gasPrice] = await Promise.all([
+      client.getBlobBaseFee(),
+      client.getGasPrice(),
+    ]);
+    // Add the priority fee tip on top of the gas price for a realistic total.
+    const totalGasPrice = gasPrice + MAX_PRIORITY_FEE_PER_GAS_GWEI * 1_000_000_000n;
+    return ESTIMATED_EXEC_GAS * totalGasPrice + BLOB_GAS_PER_BLOB * blobBaseFee;
+  } catch {
+    // Fallback: use the max-fee caps (a safe overestimate) if the RPC doesn't
+    // expose base fees. This is still a valid upper bound, just not tight.
+    const execGas = ESTIMATED_EXEC_GAS * MAX_FEE_PER_GAS_GWEI * 1_000_000_000n; // wei
+    const blobGas = BLOB_GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS_GWEI * 1_000_000_000n; // wei
+    return execGas + blobGas;
+  }
 }
 
 export function groupIntoThreads(posts: Post[]): Thread[] {
@@ -216,7 +286,22 @@ export async function fetchRemotePosts(
             const bs = new Uint8Array(hx.length / 2);
             for (let i = 0; i < bs.length; i++) bs[i] = parseInt(hx.slice(i * 2, i * 2 + 2), 16);
             const p = deserializePost(bs, tx.hash, parseInt(tx.blockNumber, 10));
-            if (p) { posts.push(p); newPosts++; onPost?.(p); break; }
+            if (p) {
+              // Fetch the tx receipt to get the actual gas cost (gasUsed ×
+              // effectiveGasPrice + blobGasUsed × blobGasPrice). Stored as a
+              // decimal string so it survives JSON serialization to IndexedDB.
+              try {
+                const receipt = await rpc(chain.rpcUrl, 'eth_getTransactionReceipt', [tx.hash]);
+                if (receipt) {
+                  const gasUsed = BigInt(receipt.gasUsed);
+                  const effectiveGasPrice = BigInt(receipt.effectiveGasPrice);
+                  const blobGasUsed = receipt.blobGasUsed ? BigInt(receipt.blobGasUsed) : 0n;
+                  const blobGasPrice = receipt.blobGasPrice ? BigInt(receipt.blobGasPrice) : 0n;
+                  p.txCost = (gasUsed * effectiveGasPrice + blobGasUsed * blobGasPrice).toString();
+                }
+              } catch {}
+              posts.push(p); newPosts++; onPost?.(p); break;
+            }
           }
         } catch (e: any) {
           if (e?.message?.includes('404') || e?.message?.includes('NOT_FOUND')) failedSlots.add(slot);

@@ -6,13 +6,13 @@
 	import { ephemeral, fundEphemeral } from '$lib/store.svelte.ts';
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { createEphemeralClient } from '$lib/ephemeral';
-	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT, estimatePostCost } from '$lib/blob';
+	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
 	import { processImage, dataUrlMime } from '$lib/image';
 	import { fmtDate, isoDatetime, formatCountdown, countdownSeverity } from '$lib/format';
 	import { parseContent } from '$lib/content';
 	import { clock } from '$lib/time.svelte.ts';
-	import { getChain, type ChainConfig } from '$lib/config';
+	import { getChain } from '$lib/config';
 	import { loadDims, dataSize, formatSize, mimeExt } from '$lib/imageinfo.svelte.ts';
 	import type { Post } from '$lib/types';
 
@@ -42,7 +42,17 @@
 	}
 	function expiryLeft(ts: number): number { return ts + chain.blobExpirySeconds - Math.floor(clock.now / 1000); }
 	function etherscanUrl(hash: string): string {
-		return `https://${chain.id === 'm' ? 'etherscan' : 'sepolia'}.etherscan.io/tx/${hash}`;
+		const sub = chain.id === 'm' ? '' : 'sepolia.';
+		return `https://${sub}etherscan.io/tx/${hash}`;
+	}
+	function fmtTxCost(p: { id: string; txCost?: string }): string {
+		if (!p.txCost) return '';
+		const eth = formatEther(BigInt(p.txCost));
+		const price = ephemeral.ethPriceUsd;
+		if (price && price > 0) {
+			return `$${(parseFloat(eth) * price).toFixed(2)}`;
+		}
+		return `${parseFloat(eth).toFixed(6).replace(/\.?0+$/, '')} ETH`;
 	}
 
 	function quotePost(shortId: string) {
@@ -75,7 +85,7 @@
 		if(!ephemeral.wallet){rerror="Generate a posting key first.";return;}
 		if(!rcontent.trim()){rerror="Write something first.";return;}
 		const postObj={board:chain.id as const,threadId:id,name:rname.trim()||'Anonymous',content:rcontent.trim(),timestamp:Math.floor(Date.now()/1000),imageMime:rimageData?dataUrlMime(rimageData):undefined,imageName:rimageData?rimageName:undefined};
-		const bytes=postHeaderBytes(postObj);
+		const bytes=postHeaderBytes(postObj, !!rimageData);
 		if(bytes>POST_HEADER_LIMIT){rerror=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		rsending=true;rerror='';rhash='';
 		try{
@@ -87,14 +97,14 @@
 		}catch(e:any){rerror=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{rsending=false;}
 	}
 	function findBacklinks(pid: string): Post[] { const t=getThread();if(!t)return[];return t.replies.filter(r=>r.content.toLowerCase().includes('>>'+pid.slice(2,8).toLowerCase())); }
-	let postCost = $derived(formatEther(estimatePostCost()).slice(0, 8));
-	let deficit = $derived(calcDeficit(chain, ephemeral.balanceFor(chain)));
+	let postCostWei = $derived(ephemeral.costEstimateFor(chain));
+	let postCost = $derived(postCostWei !== null ? formatEther(postCostWei).slice(0, 8) : '...');
+	let deficit = $derived(calcDeficit(postCostWei, ephemeral.balanceFor(chain)));
 	let deficitEth = $derived(deficit > 0n ? formatEther(deficit).slice(0, 8) : '');
 	let needFunds = $derived(deficit > 0n && ephemeral.wallet !== null);
 
-	function calcDeficit(chain: ChainConfig, balance: bigint | null): bigint {
-		const cost = estimatePostCost();
-		if (balance === null || balance >= cost) return 0n;
+	function calcDeficit(cost: bigint | null, balance: bigint | null): bigint {
+		if (cost === null || balance === null || balance >= cost) return 0n;
 		return cost - balance;
 	}
 
@@ -166,6 +176,7 @@
 					<span class="nameBlock"><span class="name">{getThread().op.name}</span></span> <span class="dateTime" data-utc={getThread().op.timestamp}><time datetime={isoDatetime(getThread().op.timestamp)}>{fmtDate(getThread().op.timestamp)}</time></span>&nbsp;
 					<span class="postNum desktop"><a href="#p{getThread().op.id.slice(2,8)}" title="Link to this post" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>No.</a><a href="#p{getThread().op.id.slice(2,8)}" title="Reply to this post" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>{getThread().op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink" href="#p{getThread().op.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>Reply</a>]</span></span>
 					<span class="countdown {countdownSeverity(expiryLeft(getThread().op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(getThread().op.timestamp))}">⏳ {formatCountdown(expiryLeft(getThread().op.timestamp))}</span>
+					{#if getThread().op.txCost}<a href={etherscanUrl('0x'+getThread().op.id)} target="_blank" class="tx-cost" title="Actual transaction cost">tx {fmtTxCost(getThread().op)}</a>{/if}
 					<a href="#" class="postMenuBtn" title="Post menu">▶</a>
 				</div>
 				{@render postMessage(getThread().op.content)}
@@ -178,7 +189,7 @@
 						<a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:150px;max-height:150px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a>
 					{/if}
 					<div class="replyBody">
-						<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span> <span class="dateTime" data-utc={reply.timestamp}><time datetime={isoDatetime(reply.timestamp)}>{fmtDate(reply.timestamp)}</time></span>&nbsp;<span class="postNum desktop"><a href="#p{reply.id.slice(2,8)}" title="Link to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>No.</a><a href="#p{reply.id.slice(2,8)}" title="Reply to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>{reply.id.slice(2,8)}</a></span><span class="countdown {countdownSeverity(expiryLeft(reply.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(reply.timestamp))}">⏳ {formatCountdown(expiryLeft(reply.timestamp))}</span><a href="#" class="postMenuBtn" title="Post menu">▶</a>
+						<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span> <span class="dateTime" data-utc={reply.timestamp}><time datetime={isoDatetime(reply.timestamp)}>{fmtDate(reply.timestamp)}</time></span>&nbsp;<span class="postNum desktop"><a href="#p{reply.id.slice(2,8)}" title="Link to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>No.</a><a href="#p{reply.id.slice(2,8)}" title="Reply to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>{reply.id.slice(2,8)}</a></span><span class="countdown {countdownSeverity(expiryLeft(reply.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(reply.timestamp))}">⏳ {formatCountdown(expiryLeft(reply.timestamp))}</span>{#if reply.txCost}<a href={etherscanUrl('0x'+reply.id)} target="_blank" class="tx-cost" title="Actual transaction cost">tx {fmtTxCost(reply)}</a>{/if}<a href="#" class="postMenuBtn" title="Post menu">▶</a>
 							{#if findBacklinks(reply.id).length>0}<div class="backlink">{#each findBacklinks(reply.id) as bl}<span><a href="#p{bl.id.slice(2,8)}" class="quotelink" onclick={(e) => { e.preventDefault(); jumpTo(bl.id.slice(2,8)); }}>&gt;&gt;{bl.id.slice(2,8)}</a> </span>{/each}</div>{/if}
 						</div>
 						{@render postMessage(reply.content)}
