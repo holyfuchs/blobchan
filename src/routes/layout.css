@@ -83,6 +83,10 @@ header {
 	font-weight: bold;
 	letter-spacing: -1px;
 	color: #af0a0f;
+	text-decoration: none;
+}
+.blobchan-logo:visited {
+	color: #af0a0f;
 }
 
 /* Board navigation */

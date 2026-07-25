@@ -97,7 +97,7 @@
 	});
 </script>
 
-<svelte:head><title>/blob/ - {getThread()?.op.subject||'Thread'} - blobchan</title></svelte:head>
+<svelte:head><title>/sep/ - {getThread()?.op.subject||'Thread'} - blobchan</title></svelte:head>
 
 {#snippet postMessage(content: string)}
 	<blockquote class="postMessage">
@@ -125,8 +125,8 @@
 <div>
 	{#if !getThread()}<div class="status-warn">Thread not found or loading...</div>
 	{:else}
-		<div class="navLinks" style="margin:4px 0">[<a href="/" class="bold">▲ Back to /blob/</a>]</div><hr />
-		<div class="boardNavDesktop">[<a href="/">blob</a>]</div><hr />
+		<div class="navLinks" style="margin:4px 0">[<a href="/sep" class="bold">▲ Back to /sep/</a>]</div><hr />
+		<div class="boardNavDesktop">[<a href="/sep">blob</a>]</div><hr />
 		<div class="center" style="margin:8px 0">
 			{#if !showReply}<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={()=>showReply=true}>Reply to Thread</button>]</div>
 			{:else}
@@ -176,7 +176,7 @@
 				</div></div>
 			{/each}
 		</div><hr />
-		<div class="boardNavDesktopFoot">[<a href="/">blob</a>] [<a href="/" class="bold">Back</a>]</div>
+		<div class="boardNavDesktopFoot">[<a href="/sep">blob</a>] [<a href="/sep" class="bold">Back</a>]</div>
 	{/if}
 </div>
 

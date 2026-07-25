@@ -21,7 +21,7 @@
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
 <header class="blobchan-header">
-	<span class="blobchan-logo">blobchan</span>
+	<a href="/" class="blobchan-logo">blobchan</a>
 	<div class="header-right">
 		<button class="nsfw-btn" onclick={nsfw.toggle}>
 			{nsfw.on ? '🔞 NSFW' : '✅ SFW'}
