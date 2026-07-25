@@ -1,0 +1,6 @@
+/_app/immutable/*.js
+  Content-Type: application/javascript
+/_app/immutable/*.css
+  Content-Type: text/css
+/_app/immutable/*.wasm
+  Content-Type: application/wasm
