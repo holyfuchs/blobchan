@@ -7,8 +7,8 @@
 	import { loadKZG } from '$lib/kzg';
 	import type { Post } from '$lib/types';
 
-	const id = $page.params.id;
-	let thread = $derived(posts.threads.find(t => t.op.id === id));
+	const id = $page.params.id.replace("0x", "");
+	function getThread() { return posts.threads.find(t => t.op.id === id); }
 
 	let showReply = $state(false);
 	let rname = $state('Anonymous');
@@ -17,31 +17,36 @@
 	let rerror = $state('');
 	let rhash = $state('');
 
+
 	async function handleReply() {
 		if (!ephemeral.wallet || !rcontent.trim() || rsending) return;
-		rsending = true; rerror = ''; rhash = '';
+		rsending = true; rerror = ""; rhash = "";
 		try {
 			const kzg = await loadKZG();
 			const client = createEphemeralClient(ephemeral.wallet);
 			const hash = await sendBlobPost({ client, kzg, post: {
-				board: 'blob', threadId: id,
-				name: rname.trim() || 'Anonymous',
+				board: "blob", threadId: id.replace("0x", ""),
+				name: rname.trim() || "Anonymous",
 				content: rcontent.trim(),
 				timestamp: Math.floor(Date.now() / 1000),
 			}});
 			rhash = hash;
 			const c = rcontent; const n = rname;
-			rcontent = '';
-			posts.addOptimistic({ board: 'blob', threadId: id, id: hash,
-				name: n.trim() || 'Anonymous', content: c.trim(),
+			rcontent = "";
+			posts.addOptimistic({ board: "blob", threadId: id.replace("0x",""), id: hash.replace("0x",""),
+				name: n.trim() || "Anonymous", content: c.trim(),
 				timestamp: Math.floor(Date.now() / 1000) });
-		} catch (e: any) { rerror = e?.shortMessage || e?.message?.slice(0,200) || 'Failed'; }
-		finally { rsending = false; }
+		} catch (e: any) {
+			console.error("Reply error:", e);
+			rerror = e?.shortMessage || e?.cause?.message || e?.message?.slice(0,300) || "Failed";
+		} finally { rsending = false; }
 	}
 
+
+
 	function findBacklinks(postId: string): Post[] {
-		if (!thread) return [];
-		return thread.replies.filter(r => r.content.includes('>>' + postId.slice(2,8)));
+		if (!getThread()) return [];
+		return getThread().replies.filter(r => r.content.includes('>>' + postId.slice(2,8)));
 	}
 
 	function fmtDate(ts: number) {
@@ -53,10 +58,10 @@
 	}
 </script>
 
-<svelte:head><title>/blob/ - {thread?.op.subject || 'Thread'} - blobchan</title></svelte:head>
+<svelte:head><title>/blob/ - {getThread()?.op.subject || 'Thread'} - blobchan</title></svelte:head>
 
 <div>
-	{#if !thread}
+	{#if !getThread()}
 		<div class="status-warn">Thread not found or loading...</div>
 	{:else}
 		<div class="navLinks" style="margin:4px 0">[<a href="/" class="bold">▲ Back to /blob/</a>]</div>
@@ -73,7 +78,7 @@
 				<table class="postForm" style="display:table"><tbody>
 					<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={rname} placeholder="Anonymous"></td></tr>
 					<tr data-type="Options"><td>Options</td><td><input name="email" type="text" placeholder=""></td></tr>
-					<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={rcontent}></textarea><input type="submit" value="Post" onclick={handleReply} disabled={rsending}></td></tr>
+					<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={rcontent}></textarea><input type="submit" value={rsending ? "Sending..." : "Post"} onclick={handleReply} disabled={rsending}></td></tr>
 					<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts are stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
 				</tbody></table>
 				{#if rerror}<div class="status-error">{rerror}</div>{/if}
@@ -88,25 +93,25 @@
 				<div class="post op">
 					<span class="threadHideButton hand" style="color:#800000;margin-right:4px">&minus;</span>
 					<div class="postInfo desktop">
-						{#if thread.op.subject}<span class="subject">{thread.op.subject}</span>{/if}
-						<span class="nameBlock"><span class="name">{thread.op.name}</span></span>
-						<span class="dateTime">{fmtDate(thread.op.timestamp)}</span>&nbsp;
+						{#if getThread().op.subject}<span class="subject">{getThread().op.subject}</span>{/if}
+						<span class="nameBlock"><span class="name">{getThread().op.name}</span></span>
+						<span class="dateTime">{fmtDate(getThread().op.timestamp)}</span>&nbsp;
 						<span class="postNum desktop">
-							<a href="#p{thread.op.id.slice(2,8)}">No.</a>
-							<a href="#p{thread.op.id.slice(2,8)}">{thread.op.id.slice(2,8)}</a>
+							<a href="#p{getThread().op.id.slice(2,8)}">No.</a>
+							<a href="#p{getThread().op.id.slice(2,8)}">{getThread().op.id.slice(2,8)}</a>
 							&nbsp;<span>[<a class="replylink hand" href="/">Reply</a>]</span>
 						</span>
 						<button class="postMenuBtn" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
 					</div>
 					<blockquote class="postMessage">
-						{#each thread.op.content.split('\n') as line}
+						{#each getThread().op.content.split('\n') as line}
 							<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>
 						{/each}
 					</blockquote>
 				</div>
 			</div>
 			<!-- Replies -->
-			{#each thread.replies as reply}
+			{#each getThread().replies as reply}
 				<div class="postContainer replyContainer">
 					<div class="sideArrows">&gt;&gt;</div>
 					<div class="post reply">

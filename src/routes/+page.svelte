@@ -16,7 +16,10 @@
 	let postHash = $state('');
 
 	async function handlePost() {
-		if (!ephemeral.wallet || !content.trim() || sending) return;
+		if (sending) return;
+		if (!ephemeral.wallet) { postError = "Generate a posting key first."; return; }
+		if (!content.trim()) { postError = "Write something first."; return; }
+
 		sending = true; postError = ''; postHash = '';
 		try {
 			const kzg = await loadKZG();
@@ -31,7 +34,7 @@
 			postHash = hash;
 			const s = content; const sb = subject; const n = name;
 			content = ''; subject = '';
-			posts.addOptimistic({ board: 'blob', threadId: hash, id: hash,
+			posts.addOptimistic({ board: 'blob', threadId: hash.replace("0x",""), id: hash.replace("0x",""),
 				subject: sb.trim() || undefined, name: n.trim() || 'Anonymous',
 				content: s.trim(), timestamp: Math.floor(Date.now() / 1000) });
 		} catch (e: any) { postError = e?.shortMessage || e?.message?.slice(0,200) || 'Failed'; }
@@ -66,7 +69,7 @@
 			<table class="postForm" style="display:table"><tbody>
 				<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={name} placeholder="Anonymous"></td></tr>
 				<tr data-type="Options"><td>Options</td><td><input name="email" type="text" placeholder=""></td></tr>
-				<tr data-type="Subject"><td>Subject</td><td><input name="sub" type="text" bind:value={subject} placeholder="(optional)"><input type="submit" value="Post" onclick={handlePost} disabled={sending}></td></tr>
+				<tr data-type="Subject"><td>Subject</td><td><input name="sub" type="text" bind:value={subject} placeholder="(optional)"><input type="submit" value={sending ? "Sending..." : "Post"} onclick={handlePost} disabled={sending}></td></tr>
 				<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={content}></textarea></td></tr>
 				<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts are stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
 			</tbody></table>

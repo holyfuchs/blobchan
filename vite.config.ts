@@ -5,8 +5,17 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-		optimizeDeps: { exclude: ['kzg-wasm'] },
-		plugins: [
+			optimizeDeps: { exclude: ['kzg-wasm'] },
+			server: {
+				proxy: {
+					'/api': {
+						target: 'https://quick-wandering-shape.ethereum-sepolia.quiknode.pro/6472c8913762e103c23199b1a2a6e422c137701a',
+						changeOrigin: true,
+						rewrite: (path) => path.replace(/^\/api/, ''),
+					},
+				},
+			},
+			plugins: [
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {
