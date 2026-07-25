@@ -7,17 +7,15 @@ import type { Post, Thread } from './types';
 
 const BLOB_SIZE = 131072;
 
-
 export function deserializePost(data: Uint8Array, txHash: string, blockNumber?: number): Post | null {
   try {
     let end = data.indexOf(0); if (end === -1) end = data.length;
     const raw = new TextDecoder().decode(data.slice(0, end));
     if (!raw.startsWith(BLOBCHAN_MARKER)) return null;
-    const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as Omit<Post, "id" | "blockNumber">;
-    return { ...p, id: txHash.replace("0x", ""), threadId: (p.threadId || txHash).replace("0x", ""), blockNumber, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
+    const p = JSON.parse(raw.slice(BLOBCHAN_MARKER.length)) as Omit<Post, 'id' | 'blockNumber'>;
+    return { ...p, id: txHash.replace('0x', ''), threadId: (p.threadId || txHash).replace('0x', ''), blockNumber, timestamp: p.timestamp || Math.floor(Date.now() / 1000) };
   } catch { return null; }
 }
-
 
 export async function sendBlobPost(args: {
   client: WalletClient<Transport, Chain, Account>;
@@ -55,12 +53,14 @@ export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts
   try {
     const url = `https://api.etherscan.io/v2/api?chainid=11155111&module=account&action=txlist&address=${BLOBCHAN_ADDRESS}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${ETHERSCAN_API_KEY}`;
     const res = await fetch(url); const data = await res.json();
+    if (data.status !== '1' || !data.result) { console.log('[blobchan] Etherscan: no results'); return { posts: [], isFresh: false }; }
 
-
-    const posts: Post[] = []; let newPosts = 0;
+    const posts: Post[] = []; let newPosts = 0; let skipped = 0;
     for (const tx of data.result) {
       if (tx.to?.toLowerCase() !== BLOBCHAN_ADDRESS.toLowerCase()) continue;
-      if (cachedIds?.has(tx.hash)) continue;
+      // Check cache — tx.hash has 0x, cached IDs don't
+      const strippedHash = tx.hash.replace('0x', '');
+      if (cachedIds?.has(strippedHash)) { skipped++; continue; }
       try {
         const block = await rpc('eth_getBlockByHash', [tx.blockHash, false]);
         const parentRoot = block.parentBeaconBlockRoot; if (!parentRoot) continue;
@@ -74,8 +74,9 @@ export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts
           const p = deserializePost(bytes, tx.hash, parseInt(tx.blockNumber, 10));
           if (p) { posts.push(p); newPosts++; break; }
         }
-      } catch {}
+      } catch { /* skip */ }
     }
+    console.log('[blobchan] Chain:', newPosts, 'new +', skipped, 'cached =', newPosts + skipped, 'total txs');
     return { posts, isFresh: newPosts > 0 };
   } catch { return { posts: [], isFresh: false }; }
 }

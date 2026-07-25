@@ -9,7 +9,10 @@ let error = $state('');
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('posts')) req.result.createObjectStore('posts', { keyPath: 'id' }); };
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains('posts'))
+        req.result.createObjectStore('posts', { keyPath: 'id' });
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -35,13 +38,17 @@ async function refresh() {
   loading = true; error = '';
   try {
     const cached = await dbGetAll();
+    console.log('[blobchan] Cache:', cached.length, 'posts');
     const cachedIds = new Set(cached.map(p => p.id));
     const result = await fetchRemotePosts(cachedIds);
+    console.log('[blobchan] New from chain:', result.posts.length, '| Fresh:', result.isFresh);
+
     if (result.isFresh || allPosts.length === 0) {
       const map = new Map<string, Post>();
       for (const p of cached) map.set(p.id, p);
       for (const p of result.posts) map.set(p.id, p);
-      allPosts = [...map.values()].sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+      allPosts = [...map.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      console.log('[blobchan] Total:', map.size, 'posts');
       if (result.posts.length > 0) dbPutAll(result.posts);
     }
   } catch (e: any) { error = e.message || 'Failed'; }
@@ -50,10 +57,7 @@ async function refresh() {
 
 if (typeof window !== 'undefined') {
   dbGetAll().then(async cached => {
-    if (cached.length > 0) {
-      allPosts = cached;
-      await tick();
-    }
+    if (cached.length > 0) { allPosts = cached; await tick(); }
     refresh();
   });
   setInterval(refresh, 30_000);
@@ -61,14 +65,14 @@ if (typeof window !== 'undefined') {
 
 export const posts = {
   get all() { return allPosts; },
-  get threads(): Thread[] {
-    const t = groupIntoThreads(allPosts);
-    return t;
-  },
+  get threads(): Thread[] { return groupIntoThreads(allPosts); },
   get loading() { return loading; },
   get error() { return error; },
   refresh,
   addOptimistic(post: Post) {
-    if (!allPosts.find(p => p.id === post.id)) { allPosts = [post, ...allPosts]; dbPutAll([post]); }
+    if (!allPosts.find(p => p.id === post.id)) {
+      allPosts = [post, ...allPosts];
+      dbPutAll([post]);
+    }
   },
 };
