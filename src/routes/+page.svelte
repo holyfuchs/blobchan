@@ -4,7 +4,7 @@
 	import { ephemeral } from '$lib/store.svelte.ts';
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { createEphemeralClient } from '$lib/ephemeral';
-	import { sendBlobPost } from '$lib/blob';
+	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
 
 	let threads = $derived(posts.threads);
@@ -37,11 +37,14 @@
 		if(sending)return;
 		if(!ephemeral.wallet){postError="Generate a posting key first.";return;}
 		if(!content.trim()){postError="Write something first.";return;}
+		const postObj={board:'blob' as const,threadId:'',subject:subject.trim()||undefined,name:name.trim()||'Anonymous',content:content.trim(),timestamp:Math.floor(Date.now()/1000)};
+		const bytes=postHeaderBytes(postObj);
+		if(bytes>POST_HEADER_LIMIT){postError=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		sending=true;postError='';postHash='';
-		try{
+	try{
 			const kzg=await loadKZG();
 			const client=createEphemeralClient(ephemeral.wallet);
-			const hash=await sendBlobPost({client,kzg,imageDataUrl:imageData||undefined,post:{board:'blob',threadId:'',subject:subject.trim()||undefined,name:name.trim()||'Anonymous',content:content.trim(),timestamp:Math.floor(Date.now()/1000)}});
+			const hash=await sendBlobPost({client,kzg,imageDataUrl:imageData||undefined,post:postObj});
 			postHash=hash;
 			const c=content;const sb=subject;const n=name;const img=imageData;content='';subject='';imageData='';
 			posts.addOptimistic({board:'blob',threadId:hash.replace('0x',''),id:hash.replace('0x',''),subject:sb.trim()||undefined,name:n.trim()||'Anonymous',content:c.trim(),image:img||undefined,timestamp:Math.floor(Date.now()/1000)} as any);

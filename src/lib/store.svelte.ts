@@ -1,5 +1,5 @@
-import { getAccount, getBalance, watchAccount } from '@wagmi/core';
-import { parseEther, formatEther } from 'viem';
+import { getAccount, watchAccount } from '@wagmi/core';
+import { parseEther } from 'viem';
 import { wagmiAdapter } from './wallet.svelte';
 import {
 	createEphemeralWallet,

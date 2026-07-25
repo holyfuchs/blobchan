@@ -4,7 +4,7 @@
 	import { ephemeral } from '$lib/store.svelte.ts';
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { createEphemeralClient } from '$lib/ephemeral';
-	import { sendBlobPost } from '$lib/blob';
+	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
 	import type { Post } from '$lib/types';
 
@@ -38,11 +38,14 @@
 		if(rsending)return;
 		if(!ephemeral.wallet){rerror="Generate a posting key first.";return;}
 		if(!rcontent.trim()){rerror="Write something first.";return;}
+		const postObj={board:'blob' as const,threadId:id,name:rname.trim()||'Anonymous',content:rcontent.trim(),timestamp:Math.floor(Date.now()/1000)};
+		const bytes=postHeaderBytes(postObj);
+		if(bytes>POST_HEADER_LIMIT){rerror=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		rsending=true;rerror='';rhash='';
-		try{
+	try{
 			const kzg=await loadKZG();
 			const client=createEphemeralClient(ephemeral.wallet);
-			const hash=await sendBlobPost({client,kzg,imageDataUrl:rimageData||undefined,post:{board:'blob',threadId:id,name:rname.trim()||'Anonymous',content:rcontent.trim(),timestamp:Math.floor(Date.now()/1000)}});
+			const hash=await sendBlobPost({client,kzg,imageDataUrl:rimageData||undefined,post:postObj});
 			rhash=hash;const c=rcontent;const img=rimageData;rcontent='';rimageData='';
 			posts.addOptimistic({board:'blob',threadId:id,id:hash.replace('0x',''),name:rname.trim()||'Anonymous',content:c.trim(),image:img||undefined,timestamp:Math.floor(Date.now()/1000)} as any);
 		}catch(e:any){rerror=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{rsending=false;}

@@ -2,17 +2,9 @@ import { createAppKit } from '@reown/appkit';
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
 import { sepolia } from '@reown/appkit/networks';
 import { browser } from '$app/environment';
-import type { GetAccountReturnType } from '@wagmi/core';
 
-// Reactive account state
-let accountState = $state<GetAccountReturnType | null>(null);
-
-export const account = {
-	get current() {
-		return accountState;
-	}
-};
-
+// Note: live account state lives in `store.svelte.ts` (updated via wagmi's
+// `watchAccount`). This module only owns the Wagmi/AppKit adapter setup.
 let wagmiAdapter: WagmiAdapter | null = null;
 
 // Only init on client
@@ -24,7 +16,9 @@ if (browser) {
 		projectId
 	});
 
-	const appkit = createAppKit({
+	// Initialise the AppKit modal (return value intentionally unused — account
+	// state is tracked in `store.svelte.ts` via `watchAccount`).
+	createAppKit({
 		adapters: [wagmiAdapter],
 		networks: [sepolia],
 		defaultNetwork: sepolia,
@@ -35,11 +29,6 @@ if (browser) {
 			url: window.location.origin,
 			icons: []
 		}
-	});
-
-	// Sync with Svelte $state
-	appkit.subscribeAccount((acct) => {
-		accountState = acct.isConnected ? acct : null;
 	});
 }
 

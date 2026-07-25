@@ -10,11 +10,24 @@ const HEADER_SIZE = 2048;
 const IMG_START = HEADER_SIZE;
 const failedSlots = new Set<number>();
 
-function packBlob(post: Omit<Post, 'id' | 'blocknumber' | 'image'>, imageHex?: string): Uint8Array {
+/** Maximum UTF-8 byte size of the serialized post JSON (including the `BLOBCHAN:` marker). */
+export const POST_HEADER_LIMIT = HEADER_SIZE;
+
+/**
+ * Computes the UTF-8 byte length the post header will occupy inside the blob,
+ * using the same serialization as `packBlob`. Use this in the UI to validate
+ * before submitting, so the user gets a friendly error instead of a thrown one.
+ */
+export function postHeaderBytes(post: Omit<Post, 'id' | 'blockNumber' | 'image'>): number {
+  const json = BLOBCHAN_MARKER + JSON.stringify(post);
+  return new TextEncoder().encode(json).length;
+}
+
+function packBlob(post: Omit<Post, 'id' | 'blockNumber' | 'image'>, imageHex?: string): Uint8Array {
   const json = BLOBCHAN_MARKER + JSON.stringify(post);
   const blob = new Uint8Array(BLOB_SIZE);
   const jsonBytes = new TextEncoder().encode(json);
-  if (jsonBytes.length > HEADER_SIZE) throw new Error('Post text too long');
+  if (jsonBytes.length > HEADER_SIZE) throw new Error(`Post text too long (${jsonBytes.length}/${HEADER_SIZE} bytes)`);
   blob.set(jsonBytes, 0);
   if (imageHex) {
     const imgBytes = new TextEncoder().encode(imageHex);
