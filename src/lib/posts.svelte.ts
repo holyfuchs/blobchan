@@ -9,10 +9,7 @@ let error = $state('');
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains('posts'))
-        req.result.createObjectStore('posts', { keyPath: 'id' });
-    };
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('posts')) req.result.createObjectStore('posts', { keyPath: 'id' }); };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -20,11 +17,7 @@ function openDB(): Promise<IDBDatabase> {
 
 async function dbGetAll(): Promise<Post[]> {
   const db = await openDB();
-  return new Promise(resolve => {
-    const tx = db.transaction('posts', 'readonly');
-    const req = tx.objectStore('posts').getAll();
-    req.onsuccess = () => resolve(req.result || []);
-  });
+  return new Promise(resolve => { const tx = db.transaction('posts', 'readonly'); const r = tx.objectStore('posts').getAll(); r.onsuccess = () => resolve(r.result || []); });
 }
 
 async function dbPutAll(ps: Post[]) {
@@ -41,8 +34,7 @@ async function refresh() {
     console.log('[blobchan] Cache:', cached.length, 'posts');
     const cachedIds = new Set(cached.map(p => p.id));
     const result = await fetchRemotePosts(cachedIds);
-    console.log('[blobchan] New from chain:', result.posts.length, '| Fresh:', result.isFresh);
-
+    console.log('[blobchan] New from chain:', result.posts.length);
     if (result.isFresh || allPosts.length === 0) {
       const map = new Map<string, Post>();
       for (const p of cached) map.set(p.id, p);
@@ -71,7 +63,7 @@ export const posts = {
   refresh,
   addOptimistic(post: Post) {
     if (!allPosts.find(p => p.id === post.id)) {
-      allPosts = [post, ...allPosts];
+      allPosts = [post, ...allPosts].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       dbPutAll([post]);
     }
   },
