@@ -1,7 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { createWalletClient, http } from 'viem';
 import type { Address, WalletClient, Transport, Chain, Account } from 'viem';
-import { DEFAULT_CHAIN, RPC_URL } from './config';
+import type { ChainConfig } from './config';
 import type { EphemeralWallet } from './types';
 
 const KEY = 'blobchan_ephemeral';
@@ -35,10 +35,10 @@ export function getEphemeralAddress(w: EphemeralWallet): Address {
 	return w.address as Address;
 }
 
-export function createEphemeralClient(w: EphemeralWallet): WalletClient<Transport, Chain, Account> {
+export function createEphemeralClient(w: EphemeralWallet, chain: ChainConfig): WalletClient<Transport, Chain, Account> {
 	return createWalletClient({
 		account: privateKeyToAccount(w.privateKey as `0x${string}`),
-		chain: DEFAULT_CHAIN,
-		transport: http(RPC_URL)
+		chain: chain.viemChain,
+		transport: http(chain.rpcUrl)
 	});
 }

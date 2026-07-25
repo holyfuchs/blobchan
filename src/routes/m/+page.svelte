@@ -2,4 +2,4 @@
 	import Board from '$lib/components/Board.svelte';
 </script>
 
-<Board chainId="sep" />
+<Board chainId="m" />

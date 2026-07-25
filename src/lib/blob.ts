@@ -2,7 +2,7 @@ import {
   type WalletClient, type Transport, type Chain, type Account,
   type Hex, parseGwei, bytesToHex,
 } from 'viem';
-import { BLOBCHAN_MARKER, BLOBCHAN_ADDRESS, ETHERSCAN_API_KEY, RPC_URL, BEACON_URL } from './config';
+import { BLOBCHAN_MARKER, ETHERSCAN_API_KEY, type ChainConfig } from './config';
 import type { Post, Thread } from './types';
 
 // EIP-4844 blobs are 4096 BLS12-381 field elements, each 32 bytes. Each element
@@ -18,7 +18,14 @@ const BLOB_SIZE = FIELD_ELEMENTS * BYTES_PER_ELEMENT;       // 131072 — on-wir
 const USABLE_BYTES = FIELD_ELEMENTS * USABLE_BYTES_PER_ELEMENT; // 126976 — payload capacity
 const HEADER_SIZE = 2048; // max JSON header in payload bytes
 const IMG_START = HEADER_SIZE;
-const failedSlots = new Set<number>();
+
+/** Gas settings for EIP-4844 blob transactions. Kept as named constants so the
+ *  cost estimator and `sendBlobPost` can never drift. */
+const MAX_FEE_PER_GAS_GWEI = 50n;
+const MAX_PRIORITY_FEE_PER_GAS_GWEI = 2n;
+const MAX_FEE_PER_BLOB_GAS_GWEI = 30n;
+const BLOB_GAS_PER_BLOB = 131072n; // 2^17, fixed by EIP-4845
+const ESTIMATED_EXEC_GAS = 21000n; // plain send to an EOA, no calldata
 
 /** Maximum UTF-8 byte size of the serialized post JSON (including the `BLOBCHAN:` marker). */
 export const POST_HEADER_LIMIT = HEADER_SIZE;
@@ -131,11 +138,12 @@ function dataUrlToBytes(u: string): Uint8Array {
 
 export async function sendBlobPost(args: {
   client: WalletClient<Transport, Chain, Account>;
+  chain: ChainConfig;
   post: Omit<Post, 'id' | 'blockNumber' | 'image'>;
   imageDataUrl?: string;
   kzg: any;
 }): Promise<string> {
-  const { client, post, imageDataUrl, kzg } = args;
+  const { client, chain, post, imageDataUrl, kzg } = args;
   const blob = packBlob(post, imageDataUrl ? dataUrlToBytes(imageDataUrl) : undefined);
   // Final guard before handing the blob to viem → kzg-wasm. Catches any size
   // mismatch here with a clear message instead of a bare `invalid argument`
@@ -146,9 +154,21 @@ export async function sendBlobPost(args: {
     throw new Error(`sendBlobPost: blob hex malformed (len=${blobHex.length})`);
   }
   return await client.sendTransaction({
-    to: BLOBCHAN_ADDRESS, blobs: [blobHex], kzg, type: 'eip4844' as any,
-    maxFeePerBlobGas: parseGwei('30'), maxFeePerGas: parseGwei('50'), maxPriorityFeePerGas: parseGwei('2'), value: 0n,
+    to: chain.blobchanAddress, blobs: [blobHex], kzg, type: 'eip4844' as any,
+    maxFeePerBlobGas: parseGwei(MAX_FEE_PER_BLOB_GAS_GWEI.toString()),
+    maxFeePerGas: parseGwei(MAX_FEE_PER_GAS_GWEI.toString()),
+    maxPriorityFeePerGas: parseGwei(MAX_PRIORITY_FEE_PER_GAS_GWEI.toString()),
+    value: 0n,
   });
+}
+
+/** Estimates the max cost (in wei) of a single blob post on the given chain,
+ *  using the same gas settings as `sendBlobPost`. This is the worst-case cost
+ *  — actual fees may be lower if the blob base fee is below the max. */
+export function estimatePostCost(): bigint {
+  const execGas = ESTIMATED_EXEC_GAS * MAX_FEE_PER_GAS_GWEI; // gwei
+  const blobGas = BLOB_GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS_GWEI; // gwei
+  return (execGas + blobGas) * 1_000_000_000n; // gwei → wei
 }
 
 export function groupIntoThreads(posts: Post[]): Thread[] {
@@ -156,47 +176,56 @@ export function groupIntoThreads(posts: Post[]): Thread[] {
   return ops.map(op => ({ op, replies: posts.filter(p => p.threadId === op.id && p.id !== op.id).sort((a,b) => (a.timestamp||0)-(b.timestamp||0)) }));
 }
 
-async function rpc(method: string, params: any[]) {
-  const r = await fetch(RPC_URL, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({jsonrpc:'2.0',id:1,method,params}) });
+async function rpc(rpcUrl: string, method: string, params: any[]) {
+  const r = await fetch(rpcUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({jsonrpc:'2.0',id:1,method,params}) });
   const d = await r.json(); if (d.error) throw new Error(d.error.message); return d.result;
 }
 
-async function beacon(path: string) {
-  const r = await fetch(BEACON_URL + path, { headers: { 'Accept': 'application/json' } });
+async function beacon(beaconUrl: string, path: string) {
+  const r = await fetch(beaconUrl + path, { headers: { 'Accept': 'application/json' } });
   const d = await r.json(); if (d.code) throw new Error(d.message); return d.data;
 }
 
-export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts: Post[]; isFresh: boolean }> {
+export async function fetchRemotePosts(
+  chain: ChainConfig,
+  cachedIds?: Set<string>,
+  onPost?: (post: Post) => void,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<{ posts: Post[]; isFresh: boolean }> {
+  const failedSlots = new Set<number>();
   try {
-    const url = `https://api.etherscan.io/v2/api?chainid=11155111&module=account&action=txlist&address=${BLOBCHAN_ADDRESS}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${ETHERSCAN_API_KEY}`;
+    const url = `${chain.etherscanBaseUrl}?chainid=${chain.etherscanChainId}&module=account&action=txlist&address=${chain.blobchanAddress}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${ETHERSCAN_API_KEY}`;
     const res = await fetch(url); const data = await res.json();
     if (data.status !== '1' || !data.result) return { posts: [], isFresh: false };
 
-    const posts: Post[] = []; let newPosts = 0; let skipped = 0;
+    const total = data.result.length;
+    const posts: Post[] = []; let newPosts = 0; let skipped = 0; let processed = 0;
     for (const tx of data.result) {
-      if (tx.to?.toLowerCase() !== BLOBCHAN_ADDRESS.toLowerCase()) continue;
-      if (cachedIds?.has(tx.hash.replace('0x',''))) { skipped++; continue; }
+      if (tx.to?.toLowerCase() !== chain.blobchanAddress.toLowerCase()) { processed++; onProgress?.(processed, total); continue; }
+      if (cachedIds?.has(tx.hash.replace('0x',''))) { skipped++; processed++; onProgress?.(processed, total); continue; }
       try {
-        const block = await rpc('eth_getBlockByHash', [tx.blockHash, false]);
-        const pr = block.parentBeaconBlockRoot; if (!pr) continue;
-        const ph = await beacon('/eth/v1/beacon/headers/' + pr);
+        const block = await rpc(chain.rpcUrl, 'eth_getBlockByHash', [tx.blockHash, false]);
+        const pr = block.parentBeaconBlockRoot; if (!pr) { processed++; onProgress?.(processed, total); continue; }
+        const ph = await beacon(chain.beaconUrl, '/eth/v1/beacon/headers/' + pr);
         const slot = parseInt(ph.header.message.slot) + 1;
-        if (failedSlots.has(slot)) { skipped++; continue; }
+        if (failedSlots.has(slot)) { skipped++; processed++; onProgress?.(processed, total); continue; }
         try {
-          const scs = await beacon('/eth/v1/beacon/blob_sidecars/' + slot);
+          const scs = await beacon(chain.beaconUrl, '/eth/v1/beacon/blob_sidecars/' + slot);
           for (const sc of scs) {
             const hx = (sc.blob || '').replace('0x', '');
             const bs = new Uint8Array(hx.length / 2);
             for (let i = 0; i < bs.length; i++) bs[i] = parseInt(hx.slice(i * 2, i * 2 + 2), 16);
             const p = deserializePost(bs, tx.hash, parseInt(tx.blockNumber, 10));
-            if (p) { posts.push(p); newPosts++; break; }
+            if (p) { posts.push(p); newPosts++; onPost?.(p); break; }
           }
         } catch (e: any) {
           if (e?.message?.includes('404') || e?.message?.includes('NOT_FOUND')) failedSlots.add(slot);
         }
       } catch {}
+      processed++;
+      onProgress?.(processed, total);
     }
-    console.log('[blobchan] Chain:', newPosts, 'new +', skipped, 'cached');
+    console.log(`[blobchan:${chain.id}]`, newPosts, 'new +', skipped, 'cached');
     return { posts, isFresh: newPosts > 0 };
   } catch { return { posts: [], isFresh: false }; }
 }

@@ -1,5 +1,5 @@
 import { getAccount, watchAccount } from '@wagmi/core';
-import { parseEther } from 'viem';
+import { parseEther, createPublicClient, http } from 'viem';
 import { wagmiAdapter } from './wallet.svelte';
 import {
 	createEphemeralWallet,
@@ -8,9 +8,7 @@ import {
 	importEphemeralWallet,
 	getEphemeralAddress
 } from './ephemeral';
-import { EPHEMERAL_FUND_AMOUNT, EPHEMERAL_MIN_BALANCE, RPC_URL } from './config';
-import { createPublicClient, http } from 'viem';
-import { sepolia } from 'viem/chains';
+import { CHAINS, type ChainConfig } from './config';
 import type { EphemeralWallet } from './types';
 
 // ---- Account state ----
@@ -23,7 +21,8 @@ export const account = {
 
 // ---- Ephemeral key ----
 let ephemeralWallet = $state<EphemeralWallet | null>(typeof window !== 'undefined' ? loadEphemeralWallet() : null);
-let ephemeralBalance = $state<bigint | null>(null);
+/** Per-chain balances: { sep: bigint|null, m: bigint|null } */
+let balances = $state<Record<string, bigint | null>>({});
 let fundingHash = $state<string | null>(null);
 let fundingLoading = $state(false);
 
@@ -31,11 +30,14 @@ export const ephemeral = {
 	get wallet() {
 		return ephemeralWallet;
 	},
-	get balance() {
-		return ephemeralBalance;
+	/** Balance for a specific chain. */
+	balanceFor(chain: ChainConfig): bigint | null {
+		return balances[chain.id] ?? null;
 	},
-	get hasFunds() {
-		return ephemeralBalance !== null && ephemeralBalance >= EPHEMERAL_MIN_BALANCE;
+	/** Whether the ephemeral key has enough funds on a specific chain. */
+	hasFundsFor(chain: ChainConfig): boolean {
+		const b = balances[chain.id];
+		return b !== null && b !== undefined && b >= chain.ephemeralMinBalance;
 	},
 	get fundingHash() {
 		return fundingHash;
@@ -46,40 +48,28 @@ export const ephemeral = {
 
 	generate() {
 		ephemeralWallet = createEphemeralWallet();
-		ephemeralBalance = null;
-		refreshBalance();
+		balances = {};
+		refreshAllBalances();
 	},
 
 	importKey(pk: string) {
 		ephemeralWallet = importEphemeralWallet(pk);
-		ephemeralBalance = null;
-		refreshBalance();
+		balances = {};
+		refreshAllBalances();
 	},
 
 	clear() {
 		clearEphemeralWallet();
 		ephemeralWallet = null;
-		ephemeralBalance = null;
-	},
-
-	async fund() {
-		if (!ephemeralWallet || !accountState?.address) return;
-		fundingLoading = true;
-		try {
-			// Use the main wallet to send ETH
-			const { sendTransaction } = await import('@wagmi/core');
-			// We need to use the wagmi connector for this
-			// ... simplified for now
-		} finally {
-			fundingLoading = false;
-		}
+		balances = {};
 	},
 
 	get address() {
 		return ephemeralWallet ? getEphemeralAddress(ephemeralWallet) : null;
 	},
 
-	refreshBalance
+	refreshBalance,
+	refreshAllBalances
 };
 
 // Initialize (client only)
@@ -90,29 +80,42 @@ if (typeof window !== 'undefined' && wagmiAdapter) {
 	try { accountState = getAccount(wagmiAdapter.wagmiConfig); } catch {}
 }
 
-function refreshBalance() {
+function refreshBalance(chain: ChainConfig) {
 	const w = ephemeralWallet;
 	if (!w) return;
-	createPublicClient({ chain: sepolia, transport: http(RPC_URL) })
+	createPublicClient({ chain: chain.viemChain, transport: http(chain.rpcUrl) })
 		.getBalance({ address: getEphemeralAddress(w) })
 		.then((b) => {
-			ephemeralBalance = b;
+			balances = { ...balances, [chain.id]: b };
 		})
 		.catch(() => {});
 }
 
-if (typeof window !== 'undefined') {
-	setInterval(refreshBalance, 15_000);
+function refreshAllBalances() {
+	for (const chain of Object.values(CHAINS)) refreshBalance(chain);
 }
 
-export async function fundEphemeral() {
+if (typeof window !== 'undefined') {
+	setInterval(refreshAllBalances, 15_000);
+}
+
+export async function fundEphemeral(chain: ChainConfig, amountOverride?: bigint) {
 	if (!ephemeralWallet || !accountState?.address) return;
 	fundingLoading = true;
 	try {
-		const { sendTransaction } = await import('@wagmi/core');
-		const hash = await sendTransaction(wagmiAdapter!.wagmiConfig, {
+		const { sendTransaction, switchChain, getChainId } = await import('@wagmi/core');
+		const config = wagmiAdapter!.wagmiConfig;
+		// Switch the connected wallet to the target chain if it's not already active.
+		// This prompts the user in their wallet (e.g. MetaMask) to switch networks.
+		const currentChainId = getChainId(config);
+		if (currentChainId !== chain.viemChain.id) {
+			await switchChain(config, { chainId: chain.viemChain.id });
+		}
+		const value = amountOverride ?? parseEther(chain.ephemeralFundAmount);
+		const hash = await sendTransaction(config, {
 			to: getEphemeralAddress(ephemeralWallet),
-			value: parseEther(EPHEMERAL_FUND_AMOUNT)
+			value,
+			chainId: chain.viemChain.id,
 		});
 		fundingHash = hash;
 	} catch (e) {

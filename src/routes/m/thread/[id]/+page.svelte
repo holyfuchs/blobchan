@@ -2,4 +2,4 @@
 	import Thread from '$lib/components/Thread.svelte';
 </script>
 
-<Thread chainId="sep" />
+<Thread chainId="m" />

@@ -1,9 +1,12 @@
 <script lang="ts">
 	import './layout.css';
+	import { page } from '$app/stores';
 	import favicon from '$lib/assets/favicon.svg';
 	import { account, ephemeral, fundEphemeral } from '$lib/store.svelte.ts';
 	import { nsfw } from '$lib/nsfw.svelte.ts';
 	import { formatEther } from 'viem';
+	import { CHAINS } from '$lib/config';
+	import { estimatePostCost } from '$lib/blob';
 
 	let { children } = $props();
 
@@ -11,6 +14,20 @@
 	let showImport = $state(false);
 	let importVal = $state('');
 	let importErr = $state('');
+
+	/** Derive the active chain from the current URL path (/sep/... → sep, /m/... → m).
+	 *  Falls back to Sepolia on the landing page or unknown paths. */
+	let activeChain = $derived(
+		Object.values(CHAINS).find(c => $page.url.pathname.startsWith('/' + c.id)) ?? CHAINS.sep
+	);
+
+	/** Max cost (in ETH, truncated) of a single blob post on the active chain. */
+	let postCost = $derived(formatEther(estimatePostCost()).slice(0, 8));
+	/** Whether the ephemeral key has enough balance for at least one post. */
+	let canPost = $derived(
+		ephemeral.balanceFor(activeChain) !== null &&
+		(ephemeral.balanceFor(activeChain) || 0n) >= estimatePostCost()
+	);
 
 	function doImport() {
 		try { ephemeral.importKey(importVal.trim()); showImport = false; importVal = ''; importErr = ''; }
@@ -42,10 +59,11 @@
 			{:else}
 				<div class="key-panel">
 					<span class="key-addr">{ephemeral.address?.slice(0,6)}...{ephemeral.address?.slice(-4)}</span>
-					{#if ephemeral.balance !== null}<span class="key-bal">{formatEther(ephemeral.balance).slice(0,6)} ETH</span>{/if}
-					<button class="btn-sm" onclick={ephemeral.refreshBalance}>↻</button>
+					{#if ephemeral.balanceFor(activeChain) !== null}
+						<span class="key-bal" class:funds-low={!canPost}>{formatEther(ephemeral.balanceFor(activeChain) || 0n).slice(0,8)} ETH</span>
+					{/if}
 					<button class="btn-sm" onclick={() => showPk = !showPk}>{showPk ? '🙈' : '👁'}</button>
-					{#if !ephemeral.hasFunds}<button class="btn-sm fund" disabled={ephemeral.isFunding} onclick={fundEphemeral}>{ephemeral.isFunding ? '...' : 'Fund'}</button>{/if}
+					<button class="btn-sm fund" disabled={ephemeral.isFunding} onclick={() => fundEphemeral(activeChain)} title="~{postCost} ETH needed per post">{ephemeral.isFunding ? '...' : 'Fund'}</button>
 					<button class="btn-cancel" onclick={ephemeral.clear}>x</button>
 				</div>
 				{#if showPk && ephemeral.wallet}<div class="pk-reveal">PK: {ephemeral.wallet.privateKey}</div>{/if}
@@ -56,7 +74,7 @@
 
 {@render children()}
 
-<footer class="blobchan-footer">blobchan — posts stored on Sepolia via EIP-4844 blobs</footer>
+<footer class="blobchan-footer">blobchan — posts stored on-chain via EIP-4844 blobs</footer>
 
 <style>
 	.header-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -66,6 +84,7 @@
 	.key-panel { display: flex; align-items: center; gap: 4px; background: #ffe; border: 1px solid #d9bfb7; padding: 2px 6px; }
 	.key-addr { font-family: monospace; font-size: 9pt; color: #800000; }
 	.key-bal { color: #117743; font-weight: bold; font-size: 9pt; }
+	.key-bal.funds-low { color: #cc0000; }
 	.pk-reveal { background: #fff0e0; border: 1px solid #d9bfb7; padding: 2px 6px; font-family: monospace; font-size: 8pt; word-break: break-all; }
 	.err { color: #c00; font-size: 9pt; }
 	.fund { background: #34345c; color: #fff; }

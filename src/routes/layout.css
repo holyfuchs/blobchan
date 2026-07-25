@@ -515,6 +515,25 @@ table.postForm textarea {
 	font-size: 14pt;
 }
 
+/* Incremental loading indicator shown above the board when fetching in the
+   background while posts are already visible */
+.loading-bar {
+	text-align: center;
+	color: #707070;
+	font-size: 9pt;
+	padding: 4px 0;
+	background: #f0e0d6;
+	border-bottom: 1px solid #d9bfb7;
+}
+
+/* Per-post cost estimate shown next to the Post button in the form */
+.post-cost {
+	font-size: 9pt;
+	color: #707070;
+	margin-left: 6px;
+	white-space: nowrap;
+}
+
 .tx-link {
 	font-family: monospace;
 	font-size: 9pt;

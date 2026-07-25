@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ALL_CHAINS } from '$lib/config';
 	// Pure static landing page — no client state needed. The wallet header and
 	// footer come from the layout. The board list lives below the announcement
 	// box, linking to each board route.
@@ -27,7 +28,9 @@
 	<div class="boards">
 		<h2>Boards</h2>
 		<ul class="board-list">
-			<li><a href="/sep" class="board-link">/sep/ <span class="board-desc">Sepolia testnet</span></a></li>
+			{#each ALL_CHAINS as chain}
+				<li><a href="/{chain.id}" class="board-link">/{chain.id}/ <span class="board-desc">{chain.name}</span></a></li>
+			{/each}
 		</ul>
 	</div>
 </div>
