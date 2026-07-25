@@ -11,7 +11,7 @@ Blobchan is a fully decentralized image board. You connect with WalletConnect, g
 ### Posting (browser → blob)
 
 1. User connects their wallet, generates a dedicated burner posting key, and funds it with ETH. This key is required because no browser wallets support signing EIP-4844 (blob) transactions directly.
-2. User writes a post (text + optional WebP image, compressed to ~60 KB)
+2. User writes a post (text + optional WebP image, compressed to ~122 KB)
 3. Browser computes a **KZG commitment and proof** over the 128 KB blob using `kzg-wasm` (C-KZG compiled to WebAssembly)
 4. Viem constructs and signs a **Type 3 (EIP-4844) transaction** with the blob sidecar using the burner key, then sends it to a fixed marker address (`0x...b10b`)
 5. Post structure: first 2048 bytes = JSON metadata (board, threadId, name, content, timestamp), remaining bytes = hex-encoded image

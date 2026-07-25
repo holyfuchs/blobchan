@@ -1,18 +1,22 @@
 /**
  * Reads an image file as a data URL, compressing/re-encoding to WebP when it's
  * large. Small files (<60KB raw) are passed through as-is to preserve quality.
+ * 
+ * Animated WebP and GIF files are *always* passed through with original bytes,
+ * because canvas re-encoding would flatten them to a single frame. Browser
+ * canvas has no animated-WebP encoder, and decoding + remuxing a GIF to WebP
+ * would require a WASM encoder (libwebp) — out of scope for now. A large
+ * animated file that doesn't fit the blob image region will fail at `packBlob`
+ * time with an `Image too large` error — the user can retry with a smaller file.
  *
- * Animated WebP files are *always* passed through with original bytes, because
- * canvas re-encoding would flatten them to a single frame. A large animated
- * WebP that doesn't fit the blob image region will fail at `packBlob` time
- * with an `Image too large` error — the user can retry with a smaller file.
- *
- * The returned data URL is later hex-encoded into the image region of an
- * EIP-4844 blob (~129KB available) by `packBlob` in `blob.ts`.
+ * The returned data URL is later stored as raw binary in the image region of
+ * an EIP-4844 blob (~125KB available after 31-of-32 field-element encoding)
+ * by `packBlob` in `blob.ts`.
  */
 export async function processImage(file: File): Promise<string> {
   const animated = await isAnimatedWebp(file);
-  if (file.size < 60000 || animated) {
+  const gif = await isGif(file);
+  if (file.size < 60000 || animated || gif) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(r.result as string);
@@ -31,9 +35,9 @@ export async function processImage(file: File): Promise<string> {
       c.getContext('2d')!.drawImage(img, 0, 0, w, h);
       let q = 0.6;
       let u = c.toDataURL('image/webp', q);
-      // Blob image region is 129024 hex bytes (~64.5KB binary, ~86KB base64).
-      // 85000 chars leaves a small safety margin under that hard limit.
-      while (u.length > 85000 && q > 0.15) { q -= 0.1; u = c.toDataURL('image/webp', q); }
+      // Blob image region is 124928 raw bytes (31-of-32 encoding). Base64 is
+      // ~4/3 of binary, so max base64 ≈ 166570. 165000 leaves a small margin.
+      while (u.length > 165000 && q > 0.15) { q -= 0.1; u = c.toDataURL('image/webp', q); }
       resolve(u);
     };
     img.onerror = () => reject(new Error('Failed'));
@@ -48,6 +52,29 @@ export async function processImage(file: File): Promise<string> {
 export function dataUrlMime(dataUrl: string): string | undefined {
   const m = /^data:([^;]+);/.exec(dataUrl);
   return m?.[1];
+}
+
+/**
+ * Detects whether a file is a GIF by checking the `GIF87a` / `GIF89a` magic
+ * bytes. Trusts `file.type` when present and falls back to a byte sniff so
+ * incorrectly-typed uploads are still caught. GIFs (animated or static) are
+ * passed through unchanged to preserve any animation frames.
+ */
+async function isGif(file: File): Promise<boolean> {
+  if (file.type === 'image/gif') return true;
+  if (file.type && file.type !== 'image/gif') return false;
+  // `file.type` was empty — sniff the first 6 bytes for `GIF87a` / `GIF89a`.
+  try {
+    const buf = await file.slice(0, 6).arrayBuffer();
+    const b = new Uint8Array(buf);
+    if (b.length < 6) return false;
+    if (b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46) return false; // "GIF"
+    // 87a or 89a
+    return (b[3] === 0x38 && b[4] === 0x37 && b[5] === 0x61)
+        || (b[3] === 0x38 && b[4] === 0x39 && b[5] === 0x61);
+  } catch {
+    return false;
+  }
 }
 
 /**

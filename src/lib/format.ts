@@ -8,6 +8,11 @@ export function fmtDate(ts: number): string {
     + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
+/** ISO 8601 datetime string (e.g. `2026-07-24T06:39:58-04:00`) for the `<time datetime>` attr. */
+export function isoDatetime(ts: number): string {
+  return new Date(ts * 1000).toISOString();
+}
+
 /** Formats a remaining-seconds value as a compact countdown, e.g. `17d 4h left`,
  *  `3h 12m left`, `45s left`, or `expired`. */
 export function formatCountdown(secondsLeft: number): string {

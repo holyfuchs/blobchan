@@ -142,15 +142,9 @@ hr.abovePostForm {
 	margin: 0;
 	clear: both;
 	padding-bottom: 10px;
-	margin-bottom: 4px;
-	border-bottom: 1px dashed #d9bfb7;
-}
-.thread:last-child {
-	border-bottom: none;
 }
 .thread:last-child {
 	padding-bottom: 21px;
-	margin-bottom: 6px;
 }
 
 /* Post container */
@@ -171,21 +165,41 @@ hr.abovePostForm {
 /* Post */
 .post {
 	margin: 4px 0;
-	overflow: hidden;
+	overflow: hidden; /* contains the sideArrows float in replies */
 }
 .post.op {
 	display: inline;
+	overflow: visible; /* OVERRIDE: let the floated OP image extend so postMessage and subsequent replies wrap around it, like 4chan */
 }
+.post.op .fileThumb {
+	float: left; /* only the image floats, not the whole .file block — keeps File: text full-width on top */
+	margin: 5px 20px 5px 0; /* 4chan's spacing: text doesn't touch the image */
+}
+/* Reply images are handled by flexbox (.post.reply .file flex item), no float needed */
 
 .post.reply {
 	background-color: #f0e0d6;
 	border: 1px solid #d9bfb7;
 	border-left: none;
 	border-top: none;
-	display: table;
+	display: inline-block; /* shrink-to-fit the reply box to the width of the image+body row */
 	padding: 2px 4px;
-	max-width: 80%;
+	max-width: 95%;
 	margin: 1px 0 1px 20px;
+}
+.post.reply .fileText {
+	display: block; /* normal block above the flex row; wraps if the filename is long instead of stretching the box */
+	margin-bottom: 2px;
+	word-break: break-all;
+}
+.post.reply .fileThumb {
+	float: left; /* float the image so postInfo + message flow to its right */
+	margin: 0 12px 0 0;
+}
+.post.reply .replyBody {
+	display: block;
+	overflow: hidden; /* establish a BFC so the body sits beside the floated image, not under it */
+	min-width: 0;
 }
 .post.reply.highlight {
 	background: #f0c0b0 !important;
@@ -209,8 +223,11 @@ hr.abovePostForm {
 /* Post info */
 .postInfo {
 	display: block;
-	width: 100%;
 	font-size: 10pt;
+	white-space: nowrap; /* keep name/date/No./countdown/menu on one line, like 4chan */
+}
+.postInfo .backlink {
+	white-space: normal; /* backlinks can wrap if there are many */
 }
 .postInfo .subject {
 	color: #cc1105;
@@ -282,6 +299,45 @@ blockquote.postMessage {
 	text-decoration: underline;
 }
 
+/* Thread collapse +/- button (4chan style). Floated left so it sits at the
+   far-left edge of the post, aligned with the top of the floated `.file`
+   block; the image and message stack to its right. Markup places it right
+   after `.postInfo` so the two floats (button + image) are adjacent and the
+   image is pushed right by the button's width. */
+.threadHideButton {
+	float: left;
+	margin: 1px 6px 0 0;
+	color: #800000;
+	font-weight: bold;
+	user-select: none;
+	cursor: pointer;
+	font-family: arial, helvetica, sans-serif;
+	font-size: 10pt;
+	padding: 0;
+}
+.threadHideButton:hover {
+	color: #ff0000 !important;
+}
+
+/* File info line above post images (4chan style). `.fileText` is 4chan's
+   actual class; `.fileInfo` is kept as an alias for back-compat with earlier
+   blobchan markup. */
+.fileText,
+.fileInfo {
+	font-size: 9pt;
+	color: #800000;
+	margin-bottom: 2px;
+}
+.fileText a,
+.fileInfo a {
+	color: #0000ee;
+	text-decoration: underline;
+}
+.fileText a:hover,
+.fileInfo a:hover {
+	color: #ff0000 !important;
+}
+
 /* Highlighted post (jump target from a quotelink) */
 .post.op.highlight {
 	background: #f0c0b0;
@@ -327,9 +383,12 @@ blockquote.postMessage {
 
 /* === Post form (4chan exact) === */
 table.postForm {
-	border-spacing: 1px;
+	border-collapse: separate; /* override Tailwind preflight's `collapse` so border-spacing works */
+	border-spacing: 2px;
 	margin-left: auto;
 	margin-right: auto;
+	width: auto; /* shrink to fit inputs, like 4chan — don't let any reset stretch it full-width */
+	text-align: left; /* override inherited `text-align: center` from `.center` wrapper so inputs hug the label, not float in the middle of the cell */
 }
 table.postForm > tbody > tr > td:first-child {
 	background-color: #EA8;
@@ -338,6 +397,7 @@ table.postForm > tbody > tr > td:first-child {
 	border: 1px solid #800;
 	padding: 0 5px;
 	font-size: 10pt;
+	white-space: nowrap;
 }
 tr.rules td {
 	border: 0 !important;
@@ -346,8 +406,9 @@ tr.rules td {
 }
 table.postForm td {
 	margin: 0;
-	padding: 0;
+	padding: 1px 2px;
 	font-size: 10pt;
+	text-align: left; /* inputs hug the label cell, like 4chan — don't center inline-block inputs in a wide td */
 }
 table.postForm input[type='text'] {
 	width: 244px;

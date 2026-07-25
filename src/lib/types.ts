@@ -7,9 +7,13 @@ export interface Post {
   content: string;
   image?: string;
   /** MIME type of the stored image (e.g. `image/webp`, `image/png`). Stored
-   *  in the blob header so reads reconstruct the data URL with the right MIME.
-   *  Older posts without this field fall back to `image/webp`. */
+   *   in the blob header so reads reconstruct the data URL with the right MIME.
+   *   Older posts without this field fall back to `image/webp`. */
   imageMime?: string;
+  /** Original filename the user selected, shown in the `File:` info bar to
+   *   match the classic imageboard layout. Optional — older posts and posts
+   *   without an image have no value. */
+  imageName?: string;
   timestamp: number;
   blockNumber?: number;
 }

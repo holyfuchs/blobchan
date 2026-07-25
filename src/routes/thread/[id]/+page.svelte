@@ -8,10 +8,11 @@
 	import { sendBlobPost, postHeaderBytes, POST_HEADER_LIMIT } from '$lib/blob';
 	import { loadKZG } from '$lib/kzg';
 	import { processImage, dataUrlMime } from '$lib/image';
-	import { fmtDate, formatCountdown, countdownSeverity } from '$lib/format';
+	import { fmtDate, isoDatetime, formatCountdown, countdownSeverity } from '$lib/format';
 	import { parseContent } from '$lib/content';
 	import { clock } from '$lib/time.svelte.ts';
 	import { BLOB_EXPIRY_SECONDS } from '$lib/config';
+	import { loadDims, dataSize, formatSize, mimeExt } from '$lib/imageinfo.svelte.ts';
 	import type { Post } from '$lib/types';
 
 	const id = $page.params.id.replace('0x', '');
@@ -19,6 +20,7 @@
 	let rname = $state('Anonymous');
 	let rcontent = $state('');
 	let rimageData = $state('');
+	let rimageName = $state('');
 	let rsending = $state(false);
 	let rerror = $state('');
 	let rhash = $state('');
@@ -63,13 +65,14 @@
 	function onRefEnter(ref: string, e: MouseEvent) { hover = { ref, x: e.clientX, y: e.clientY }; }
 	function onRefMove(e: MouseEvent) { if (hover) hover = { ...hover, x: e.clientX, y: e.clientY }; }
 	function onRefLeave() { hover = null; }
+	function fileName(p: { id: string; imageName?: string; imageMime?: string }) { return p.imageName || ('blob' + p.id.slice(2,8) + '.' + mimeExt(p.imageMime)); }
 
-	async function handleFileChange(e: Event) { const f=(e.target as HTMLInputElement).files?.[0]; if(!f)return; try{rimageData=await processImage(f);}catch(e:any){rerror='Image error: '+(e.message||'unknown');} }
+	async function handleFileChange(e: Event) { const f=(e.target as HTMLInputElement).files?.[0]; if(!f)return; rimageName=f.name; try{rimageData=await processImage(f);}catch(e:any){rerror='Image error: '+(e.message||'unknown');} }
 	async function handleReply() {
 		if(rsending)return;
 		if(!ephemeral.wallet){rerror="Generate a posting key first.";return;}
 		if(!rcontent.trim()){rerror="Write something first.";return;}
-		const postObj={board:'blob' as const,threadId:id,name:rname.trim()||'Anonymous',content:rcontent.trim(),timestamp:Math.floor(Date.now()/1000),imageMime:rimageData?dataUrlMime(rimageData):undefined};
+		const postObj={board:'blob' as const,threadId:id,name:rname.trim()||'Anonymous',content:rcontent.trim(),timestamp:Math.floor(Date.now()/1000),imageMime:rimageData?dataUrlMime(rimageData):undefined,imageName:rimageData?rimageName:undefined};
 		const bytes=postHeaderBytes(postObj);
 		if(bytes>POST_HEADER_LIMIT){rerror=`Post too long (${bytes}/${POST_HEADER_LIMIT} bytes). Shorten your comment.`;return;}
 		rsending=true;rerror='';rhash='';
@@ -77,8 +80,8 @@
 			const kzg=await loadKZG();
 			const client=createEphemeralClient(ephemeral.wallet);
 			const hash=await sendBlobPost({client,kzg,imageDataUrl:rimageData||undefined,post:postObj});
-			rhash=hash;const c=rcontent;const img=rimageData;rcontent='';rimageData='';
-			posts.addOptimistic({board:'blob',threadId:id,id:hash.replace('0x',''),name:rname.trim()||'Anonymous',content:c.trim(),image:img||undefined,timestamp:Math.floor(Date.now()/1000)} as any);
+			rhash=hash;const c=rcontent;const img=rimageData;const imn=rimageName;rcontent='';rimageData='';rimageName='';
+			posts.addOptimistic({board:'blob',threadId:id,id:hash.replace('0x',''),name:rname.trim()||'Anonymous',content:c.trim(),image:img||undefined,imageMime:img?dataUrlMime(img):undefined,imageName:img?imn:undefined,timestamp:Math.floor(Date.now()/1000)} as any);
 		}catch(e:any){rerror=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{rsending=false;}
 	}
 	function findBacklinks(pid: string): Post[] { const t=getThread();if(!t)return[];return t.replies.filter(r=>r.content.toLowerCase().includes('>>'+pid.slice(2,8).toLowerCase())); }
@@ -127,11 +130,10 @@
 		<div class="center" style="margin:8px 0">
 			{#if !showReply}<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={()=>showReply=true}>Reply to Thread</button>]</div>
 			{:else}
-				<div id="togglePostFormLink" class="desktop" style="margin-bottom:4px">[<button class="hand toggle-link" onclick={()=>showReply=false}>- Hide Reply Form -</button>]</div>
 				<table class="postForm" style="display:table"><tbody>
-					<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={rname} placeholder="Anonymous"></td></tr>
-					<tr data-type="File"><td>File</td><td><input id="postFile" name="upfile" type="file" accept="image/*" onchange={handleFileChange}></td></tr>
-					<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={rcontent}></textarea><input type="submit" value={rsending?"Sending...":"Post"} onclick={handleReply} disabled={rsending}></td></tr>
+					<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={rname} placeholder="Anonymous" tabindex="1"></td></tr>
+					<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" wrap="soft" bind:value={rcontent} tabindex="4"></textarea><input type="submit" value={rsending?"Sending...":"Post"} onclick={handleReply} disabled={rsending} tabindex="10"></td></tr>
+					<tr data-type="File"><td>File</td><td><input id="postFile" name="upfile" type="file" accept="image/*" onchange={handleFileChange} tabindex="8"></td></tr>
 					{#if rimageData}<tr><td></td><td><img src={rimageData} alt="preview" style="max-width:200px;max-height:200px" /></td></tr>{/if}
 					<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
 				</tbody></table>
@@ -141,28 +143,36 @@
 		</div><hr />
 		<div class="thread">
 			<div class="postContainer opContainer"><div class="post op" id="p{getThread().op.id.slice(2,8)}">
-				<span class="threadHideButton hand" style="color:#800000;margin-right:4px">&minus;</span>
+				<span class="threadHideButton" title="Hide post">&minus;</span>
+				{#if getThread().op.image}
+					{@const d = loadDims(getThread().op.image)}
+					<div class="file">
+						<div class="fileText">File: <a href={getThread().op.image} target="_blank">{fileName(getThread().op)}</a> ({formatSize(dataSize(getThread().op.image))}{#if d}, {d.w}x{d.h}{/if})</div>
+						<a class="fileThumb"><img src={getThread().op.image} alt="post image" style="max-width:200px;max-height:200px;cursor:pointer;{blurred(getThread().op.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(getThread().op.image)} loading="lazy" /></a>
+					</div>
+				{/if}
 				<div class="postInfo desktop">
 					{#if getThread().op.subject}<span class="subject">{getThread().op.subject}</span>{/if}
-					<span class="nameBlock"><span class="name">{getThread().op.name}</span></span><span class="dateTime">{fmtDate(getThread().op.timestamp)}</span>&nbsp;
-					<span class="postNum desktop"><a href="#p{getThread().op.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>No.</a><a href="#p{getThread().op.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>{getThread().op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink hand" href="#p{getThread().op.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); showReply=true; }}>Reply</a>]</span></span>
+					<span class="nameBlock"><span class="name">{getThread().op.name}</span></span> <span class="dateTime" data-utc={getThread().op.timestamp}><time datetime={isoDatetime(getThread().op.timestamp)}>{fmtDate(getThread().op.timestamp)}</time></span>&nbsp;
+					<span class="postNum desktop"><a href="#p{getThread().op.id.slice(2,8)}" title="Link to this post" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>No.</a><a href="#p{getThread().op.id.slice(2,8)}" title="Reply to this post" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>{getThread().op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink" href="#p{getThread().op.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(getThread().op.id.slice(2,8)); }}>Reply</a>]</span></span>
 					<span class="countdown {countdownSeverity(expiryLeft(getThread().op.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(getThread().op.timestamp))}">⏳ {formatCountdown(expiryLeft(getThread().op.timestamp))}</span>
-					<button class="postMenuBtn" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
+					<a href="#" class="postMenuBtn" title="Post menu">▶</a>
 				</div>
-				{#if getThread().op.image}
-					<div class="file"><a class="fileThumb"><img src={getThread().op.image} alt="post image" style="max-width:200px;max-height:200px;cursor:pointer;{blurred(getThread().op.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(getThread().op.image)} loading="lazy" /></a></div>
-				{/if}
 				{@render postMessage(getThread().op.content)}
 			</div></div>
 			{#each getThread().replies as reply}
 				<div class="postContainer replyContainer"><div class="sideArrows">&gt;&gt;</div><div class="post reply" id="p{reply.id.slice(2,8)}">
-					<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span><span class="dateTime">{fmtDate(reply.timestamp)}</span>&nbsp;<span class="postNum desktop"><a href="#p{reply.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>No.</a><a href="#p{reply.id.slice(2,8)}" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>{reply.id.slice(2,8)}</a><span class="countdown {countdownSeverity(expiryLeft(reply.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(reply.timestamp))}">⏳ {formatCountdown(expiryLeft(reply.timestamp))}</span></span><button class="postMenuBtn" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
-						{#if findBacklinks(reply.id).length>0}<div class="backlink">{#each findBacklinks(reply.id) as bl}<span><a href="#p{bl.id.slice(2,8)}" class="quotelink" onclick={(e) => { e.preventDefault(); jumpTo(bl.id.slice(2,8)); }}>&gt;&gt;{bl.id.slice(2,8)}</a> </span>{/each}</div>{/if}
-					</div>
 					{#if reply.image}
-						<div class="file"><a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:150px;max-height:150px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a></div>
+						{@const d = loadDims(reply.image)}
+						<div class="fileText">File: <a href={reply.image} target="_blank">{fileName(reply)}</a> ({formatSize(dataSize(reply.image))}{#if d}, {d.w}x{d.h}{/if})</div>
+						<a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:150px;max-height:150px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a>
 					{/if}
-					{@render postMessage(reply.content)}
+					<div class="replyBody">
+						<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span> <span class="dateTime" data-utc={reply.timestamp}><time datetime={isoDatetime(reply.timestamp)}>{fmtDate(reply.timestamp)}</time></span>&nbsp;<span class="postNum desktop"><a href="#p{reply.id.slice(2,8)}" title="Link to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>No.</a><a href="#p{reply.id.slice(2,8)}" title="Reply to this post" onclick={(e) => { e.preventDefault(); quotePost(reply.id.slice(2,8)); }}>{reply.id.slice(2,8)}</a></span><span class="countdown {countdownSeverity(expiryLeft(reply.timestamp))}" title="Blob expires in {formatCountdown(expiryLeft(reply.timestamp))}">⏳ {formatCountdown(expiryLeft(reply.timestamp))}</span><a href="#" class="postMenuBtn" title="Post menu">▶</a>
+							{#if findBacklinks(reply.id).length>0}<div class="backlink">{#each findBacklinks(reply.id) as bl}<span><a href="#p{bl.id.slice(2,8)}" class="quotelink" onclick={(e) => { e.preventDefault(); jumpTo(bl.id.slice(2,8)); }}>&gt;&gt;{bl.id.slice(2,8)}</a> </span>{/each}</div>{/if}
+						</div>
+						{@render postMessage(reply.content)}
+					</div>
 				</div></div>
 			{/each}
 		</div><hr />
