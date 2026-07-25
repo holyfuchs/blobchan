@@ -11,32 +11,58 @@
 	let name = $state('Anonymous');
 	let subject = $state('');
 	let content = $state('');
+	let imageData = $state('');
 	let sending = $state(false);
 	let postError = $state('');
 	let postHash = $state('');
+
+	async function processImage(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.onload = () => {
+				const canvas = document.createElement('canvas');
+				const maxW = 600; let w = img.width, h = img.height;
+				if (w > maxW) { h = h * maxW / w; w = maxW; }
+				canvas.width = w; canvas.height = h;
+				canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+				let q = 0.6; let url = canvas.toDataURL('image/webp', q);
+				while (url.length > 80000 && q > 0.15) { q -= 0.1; url = canvas.toDataURL('image/webp', q); }
+				resolve(url);
+			};
+			img.onerror = () => reject(new Error('Failed to load image'));
+			img.src = URL.createObjectURL(file);
+		});
+	}
+
+	async function handleFileChange(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		try { imageData = await processImage(file); }
+		catch (err: any) { postError = 'Image error: ' + (err.message || 'unknown'); }
+	}
 
 	async function handlePost() {
 		if (sending) return;
 		if (!ephemeral.wallet) { postError = "Generate a posting key first."; return; }
 		if (!content.trim()) { postError = "Write something first."; return; }
-
 		sending = true; postError = ''; postHash = '';
 		try {
 			const kzg = await loadKZG();
 			const client = createEphemeralClient(ephemeral.wallet);
-			const hash = await sendBlobPost({ client, kzg, post: {
-				board: 'blob', threadId: '',
-				subject: subject.trim() || undefined,
-				name: name.trim() || 'Anonymous',
-				content: content.trim(),
-				timestamp: Math.floor(Date.now() / 1000),
-			}});
+			const hash = await sendBlobPost({
+				client, kzg,
+				imageDataUrl: imageData || undefined,
+				post: { board: 'blob', threadId: '', subject: subject.trim() || undefined,
+					name: name.trim() || 'Anonymous', content: content.trim(),
+					timestamp: Math.floor(Date.now() / 1000) },
+			});
 			postHash = hash;
-			const s = content; const sb = subject; const n = name;
-			content = ''; subject = '';
-			posts.addOptimistic({ board: 'blob', threadId: hash.replace("0x",""), id: hash.replace("0x",""),
+			const c = content; const sb = subject; const n = name; const img = imageData;
+			content = ''; subject = ''; imageData = '';
+			posts.addOptimistic({ board: 'blob', threadId: hash.replace('0x',''), id: hash.replace('0x',''),
 				subject: sb.trim() || undefined, name: n.trim() || 'Anonymous',
-				content: s.trim(), timestamp: Math.floor(Date.now() / 1000) });
+				content: c.trim(), image: img || undefined,
+				timestamp: Math.floor(Date.now() / 1000) } as any);
 		} catch (e: any) { postError = e?.shortMessage || e?.message?.slice(0,200) || 'Failed'; }
 		finally { sending = false; }
 	}
@@ -60,7 +86,6 @@
 	</div>
 	<hr class="abovePostForm" />
 
-	<!-- Post form -->
 	<div class="center" style="margin:8px 0">
 		{#if !showForm}
 			<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={() => showForm = true}>Start a New Thread</button>]</div>
@@ -68,10 +93,11 @@
 			<div id="togglePostFormLink" class="desktop" style="margin-bottom:4px">[<button class="hand toggle-link" onclick={() => showForm = false}>- Hide Post Form -</button>]</div>
 			<table class="postForm" style="display:table"><tbody>
 				<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={name} placeholder="Anonymous"></td></tr>
-				<tr data-type="Options"><td>Options</td><td><input name="email" type="text" placeholder=""></td></tr>
+				<tr data-type="File"><td>File</td><td><input id="postFile" name="upfile" type="file" accept="image/*" onchange={handleFileChange}></td></tr>
 				<tr data-type="Subject"><td>Subject</td><td><input name="sub" type="text" bind:value={subject} placeholder="(optional)"><input type="submit" value={sending ? "Sending..." : "Post"} onclick={handlePost} disabled={sending}></td></tr>
 				<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={content}></textarea></td></tr>
-				<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts are stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
+				{#if imageData}<tr><td></td><td><img src={imageData} alt="preview" style="max-width:200px;max-height:200px" /></td></tr>{/if}
+				<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Images compressed to ~60KB WebP. Posts stored on-chain in EIP-4844 blobs.</li></ul></td></tr>
 			</tbody></table>
 			{#if postError}<div class="status-error">{postError}</div>{/if}
 			{#if postHash}<div class="status-success center">✓ Posted! <a href="https://sepolia.etherscan.io/tx/{postHash}" target="_blank" class="underline">View tx</a></div>{/if}
@@ -101,8 +127,10 @@
 									<a href="/thread/{thread.op.id}">{thread.op.id.slice(2,8)}</a>
 									&nbsp;<span>[<a class="replylink hand" href="/thread/{thread.op.id}">Reply</a>]</span>
 								</span>
-								<button class="postMenuBtn hand" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
 							</div>
+							{#if thread.op.image}
+								<div class="file"><a class="fileThumb" href={thread.op.image} target="_blank"><img src={thread.op.image} alt="post image" style="max-width:200px;max-height:200px" loading="lazy" /></a></div>
+							{/if}
 							<blockquote class="postMessage">
 								{#each thread.op.content.split('\n') as line}
 									<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>
@@ -121,7 +149,6 @@
 										<a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">No.</a>
 										<a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">{reply.id.slice(2,8)}</a>
 									</span>
-									<button class="postMenuBtn hand" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
 								</div>
 								<blockquote class="postMessage">
 									{#each reply.content.split('\n') as line}

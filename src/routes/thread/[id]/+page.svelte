@@ -7,8 +7,7 @@
 	import { loadKZG } from '$lib/kzg';
 	import type { Post } from '$lib/types';
 
-	const id = $page.params.id.replace("0x", "");
-	function getThread() { return posts.threads.find(t => t.op.id === id); }
+	const id = $page.params.id.replace('0x', '');
 
 	let showReply = $state(false);
 	let rname = $state('Anonymous');
@@ -17,36 +16,33 @@
 	let rerror = $state('');
 	let rhash = $state('');
 
+	function getThread() { return posts.threads.find(t => t.op.id === id); }
 
 	async function handleReply() {
-		if (!ephemeral.wallet || !rcontent.trim() || rsending) return;
-		rsending = true; rerror = ""; rhash = "";
+		if (rsending) return;
+		if (!ephemeral.wallet) { rerror = "Generate a posting key first."; return; }
+		if (!rcontent.trim()) { rerror = "Write something first."; return; }
+		rsending = true; rerror = ''; rhash = '';
 		try {
 			const kzg = await loadKZG();
 			const client = createEphemeralClient(ephemeral.wallet);
 			const hash = await sendBlobPost({ client, kzg, post: {
-				board: "blob", threadId: id.replace("0x", ""),
-				name: rname.trim() || "Anonymous",
-				content: rcontent.trim(),
+				board: 'blob', threadId: id,
+				name: rname.trim() || 'Anonymous', content: rcontent.trim(),
 				timestamp: Math.floor(Date.now() / 1000),
 			}});
-			rhash = hash;
-			const c = rcontent; const n = rname;
-			rcontent = "";
-			posts.addOptimistic({ board: "blob", threadId: id.replace("0x",""), id: hash.replace("0x",""),
-				name: n.trim() || "Anonymous", content: c.trim(),
-				timestamp: Math.floor(Date.now() / 1000) });
-		} catch (e: any) {
-			console.error("Reply error:", e);
-			rerror = e?.shortMessage || e?.cause?.message || e?.message?.slice(0,300) || "Failed";
-		} finally { rsending = false; }
+			rhash = hash; rcontent = '';
+			posts.addOptimistic({ board: 'blob', threadId: id, id: hash.replace('0x',''),
+				name: rname.trim() || 'Anonymous', content: rcontent.trim(),
+				timestamp: Math.floor(Date.now() / 1000) } as any);
+		} catch (e: any) { rerror = e?.shortMessage || e?.message?.slice(0,200) || 'Failed'; }
+		finally { rsending = false; }
 	}
 
-
-
 	function findBacklinks(postId: string): Post[] {
-		if (!getThread()) return [];
-		return getThread().replies.filter(r => r.content.includes('>>' + postId.slice(2,8)));
+		const t = getThread();
+		if (!t) return [];
+		return t.replies.filter(r => r.content.includes('>>' + postId.slice(2,8)));
 	}
 
 	function fmtDate(ts: number) {
@@ -69,7 +65,6 @@
 		<div class="boardNavDesktop">[<a href="/">blob</a>]</div>
 		<hr />
 
-		<!-- Reply form -->
 		<div class="center" style="margin:8px 0">
 			{#if !showReply}
 				<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={() => showReply = true}>Reply to Thread</button>]</div>
@@ -77,7 +72,6 @@
 				<div id="togglePostFormLink" class="desktop" style="margin-bottom:4px">[<button class="hand toggle-link" onclick={() => showReply = false}>- Hide Reply Form -</button>]</div>
 				<table class="postForm" style="display:table"><tbody>
 					<tr data-type="Name"><td>Name</td><td><input name="name" type="text" bind:value={rname} placeholder="Anonymous"></td></tr>
-					<tr data-type="Options"><td>Options</td><td><input name="email" type="text" placeholder=""></td></tr>
 					<tr data-type="Comment"><td>Comment</td><td><textarea name="com" cols="48" rows="4" bind:value={rcontent}></textarea><input type="submit" value={rsending ? "Sending..." : "Post"} onclick={handleReply} disabled={rsending}></td></tr>
 					<tr class="rules"><td colspan="2"><ul class="rules" style="margin:0;padding:0;margin-top:5px"><li style="list-style:none;font-size:11px">Posts are stored on-chain in EIP-4844 blobs (Sepolia testnet).</li></ul></td></tr>
 				</tbody></table>
@@ -88,7 +82,6 @@
 		<hr />
 
 		<div class="thread">
-			<!-- OP -->
 			<div class="postContainer opContainer">
 				<div class="post op">
 					<span class="threadHideButton hand" style="color:#800000;margin-right:4px">&minus;</span>
@@ -103,6 +96,9 @@
 						</span>
 						<button class="postMenuBtn" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
 					</div>
+					{#if getThread().op.image}
+						<div class="file"><a class="fileThumb" href={getThread().op.image} target="_blank"><img src={getThread().op.image} alt="post image" style="max-width:200px;max-height:200px" loading="lazy" /></a></div>
+					{/if}
 					<blockquote class="postMessage">
 						{#each getThread().op.content.split('\n') as line}
 							<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>
@@ -110,7 +106,6 @@
 					</blockquote>
 				</div>
 			</div>
-			<!-- Replies -->
 			{#each getThread().replies as reply}
 				<div class="postContainer replyContainer">
 					<div class="sideArrows">&gt;&gt;</div>
