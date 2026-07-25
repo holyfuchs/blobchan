@@ -83,12 +83,7 @@
 					<button class="postMenuBtn" style="background:none;border:none;color:#800000;cursor:pointer">▶</button>
 				</div>
 				{#if getThread().op.image}
-					<div class="file" style="position:relative;display:inline-block">
-						<a class="fileThumb"><img src={getThread().op.image} alt="post image" style="max-width:200px;max-height:200px" loading="lazy" /></a>
-						{#if blurred(getThread().op.image)}
-							<div onclick={()=>toggleBlur(getThread().op.image)} style="position:absolute;inset:0;background:rgba(0,0,0,.97);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-weight:bold;font-size:12px;text-align:center">NSFW<br>Click to view</div>
-						{/if}
-					</div>
+					<div class="file"><a class="fileThumb"><img src={getThread().op.image} alt="post image" style="max-width:200px;max-height:200px;cursor:pointer;{blurred(getThread().op.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(getThread().op.image)} loading="lazy" /></a></div>
 				{/if}
 				<blockquote class="postMessage">{#each getThread().op.content.split('\n') as line}<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
 			</div></div>
@@ -98,12 +93,7 @@
 						{#if findBacklinks(reply.id).length>0}<div class="backlink">{#each findBacklinks(reply.id) as bl}<span><a href="#p{bl.id.slice(2,8)}" class="quotelink">&gt;&gt;{bl.id.slice(2,8)}</a> </span>{/each}</div>{/if}
 					</div>
 					{#if reply.image}
-						<div class="file" style="position:relative;display:inline-block">
-							<a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:150px;max-height:150px" loading="lazy" /></a>
-							{#if blurred(reply.image)}
-								<div onclick={()=>toggleBlur(reply.image)} style="position:absolute;inset:0;background:rgba(0,0,0,.97);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-weight:bold;font-size:11px;text-align:center">NSFW<br>Click to view</div>
-							{/if}
-						</div>
+						<div class="file"><a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:150px;max-height:150px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a></div>
 					{/if}
 					<blockquote class="postMessage">{#each reply.content.split('\n') as line}{@const iq=line.startsWith('>')}<span class={iq?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
 				</div></div>

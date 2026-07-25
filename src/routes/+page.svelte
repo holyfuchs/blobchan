@@ -57,8 +57,7 @@
 	<div class="boardBanner"><div class="boardTitle">/blob/ - On-chain</div><div class="boardSubtitle">All posts live on-chain as EIP-4844 blobs. Immutable until expiry. Only a fool would take anything posted here as fact.</div></div>
 	<hr class="abovePostForm" />
 	<div class="center" style="margin:8px 0">
-		{#if !showForm}
-			<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={() => showForm = true}>Start a New Thread</button>]</div>
+		{#if !showForm}<div id="togglePostFormLink" class="desktop">[<button class="hand toggle-link" onclick={() => showForm = true}>Start a New Thread</button>]</div>
 		{:else}
 			<div id="togglePostFormLink" class="desktop" style="margin-bottom:4px">[<button class="hand toggle-link" onclick={() => showForm = false}>- Hide Post Form -</button>]</div>
 			<table class="postForm" style="display:table"><tbody>
@@ -89,12 +88,7 @@
 							<span class="postNum desktop"><a href="/thread/{thread.op.id}">No.</a><a href="/thread/{thread.op.id}">{thread.op.id.slice(2,8)}</a>&nbsp;<span>[<a class="replylink hand" href="/thread/{thread.op.id}">Reply</a>]</span></span>
 						</div>
 						{#if thread.op.image}
-							<div class="file" style="position:relative;display:inline-block">
-								<a class="fileThumb"><img src={thread.op.image} alt="post image" style="max-width:200px;max-height:200px" loading="lazy" /></a>
-								{#if blurred(thread.op.image)}
-									<div onclick={()=>toggleBlur(thread.op.image)} style="position:absolute;inset:0;background:rgba(0,0,0,.97);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-weight:bold;font-size:12px;text-align:center">NSFW<br>Click to view</div>
-								{/if}
-							</div>
+							<div class="file"><a class="fileThumb"><img src={thread.op.image} alt="post image" style="max-width:200px;max-height:200px;cursor:pointer;{blurred(thread.op.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(thread.op.image)} loading="lazy" /></a></div>
 						{/if}
 						<blockquote class="postMessage">{#each thread.op.content.split('\n') as line}<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
 					</div></div>
@@ -102,12 +96,7 @@
 						<div class="postContainer replyContainer"><div class="sideArrows">&gt;&gt;</div><div class="post reply">
 							<div class="postInfo desktop"><span class="nameBlock"><span class="name">{reply.name}</span></span><span class="dateTime">{fmtDate(reply.timestamp)}</span>&nbsp;<span class="postNum desktop"><a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">No.</a><a href="/thread/{thread.op.id}#p{reply.id.slice(2,8)}">{reply.id.slice(2,8)}</a></span></div>
 							{#if reply.image}
-								<div class="file" style="position:relative;display:inline-block">
-									<a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:125px;max-height:125px" loading="lazy" /></a>
-									{#if blurred(reply.image)}
-										<div onclick={()=>toggleBlur(reply.image)} style="position:absolute;inset:0;background:rgba(0,0,0,.97);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-weight:bold;font-size:10px;text-align:center">NSFW<br>Click</div>
-									{/if}
-								</div>
+								<div class="file"><a class="fileThumb"><img src={reply.image} alt="reply image" style="max-width:125px;max-height:125px;cursor:pointer;{blurred(reply.image)?'filter:blur(25px)':''}" onclick={()=>toggleBlur(reply.image)} loading="lazy" /></a></div>
 							{/if}
 							<blockquote class="postMessage">{#each reply.content.split('\n') as line}<span class={line.startsWith('>')?'quote':''}>{line||'\u00A0'}{'\n'}</span>{/each}</blockquote>
 						</div></div>
