@@ -6,6 +6,7 @@ import { BLOBCHAN_MARKER, BLOBCHAN_ADDRESS, ETHERSCAN_API_KEY, RPC_URL } from '.
 import type { Post, Thread } from './types';
 
 const BLOB_SIZE = 131072;
+const failedSlots = new Set<number>();
 
 export function deserializePost(data: Uint8Array, txHash: string, blockNumber?: number): Post | null {
   try {
@@ -58,7 +59,6 @@ export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts
     const posts: Post[] = []; let newPosts = 0; let skipped = 0;
     for (const tx of data.result) {
       if (tx.to?.toLowerCase() !== BLOBCHAN_ADDRESS.toLowerCase()) continue;
-      // Check cache — tx.hash has 0x, cached IDs don't
       const strippedHash = tx.hash.replace('0x', '');
       if (cachedIds?.has(strippedHash)) { skipped++; continue; }
       try {
@@ -66,13 +66,24 @@ export async function fetchRemotePosts(cachedIds?: Set<string>): Promise<{ posts
         const parentRoot = block.parentBeaconBlockRoot; if (!parentRoot) continue;
         const parentHeader = await beacon('eth/v1/beacon/headers/' + parentRoot);
         const ourSlot = parseInt(parentHeader.header.message.slot) + 1;
-        const sidecars = await beacon('eth/v1/beacon/blob_sidecars/' + ourSlot);
-        for (const sc of sidecars) {
-          const hex = (sc.blob || '').replace('0x', '');
-          const bytes = new Uint8Array(hex.length / 2);
-          for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-          const p = deserializePost(bytes, tx.hash, parseInt(tx.blockNumber, 10));
-          if (p) { posts.push(p); newPosts++; break; }
+
+        // Skip slots that previously returned 404
+        if (failedSlots.has(ourSlot)) { skipped++; continue; }
+
+        try {
+          const sidecars = await beacon('eth/v1/beacon/blob_sidecars/' + ourSlot);
+          for (const sc of sidecars) {
+            const hex = (sc.blob || '').replace('0x', '');
+            const bytes = new Uint8Array(hex.length / 2);
+            for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+            const p = deserializePost(bytes, tx.hash, parseInt(tx.blockNumber, 10));
+            if (p) { posts.push(p); newPosts++; break; }
+          }
+        } catch (e: any) {
+          // If 404, remember this slot so we don't retry
+          if (e?.message?.includes('404') || e?.message?.includes('NOT_FOUND')) {
+            failedSlots.add(ourSlot);
+          }
         }
       } catch { /* skip */ }
     }
