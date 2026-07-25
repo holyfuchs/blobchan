@@ -31,16 +31,13 @@ async function refresh() {
   loading = true; error = '';
   try {
     const cached = await dbGetAll();
-    console.log('[blobchan] Cache:', cached.length, 'posts');
     const cachedIds = new Set(cached.map(p => p.id));
     const result = await fetchRemotePosts(cachedIds);
-    console.log('[blobchan] New from chain:', result.posts.length);
     if (result.isFresh || allPosts.length === 0) {
       const map = new Map<string, Post>();
       for (const p of cached) map.set(p.id, p);
       for (const p of result.posts) map.set(p.id, p);
       allPosts = [...map.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      console.log('[blobchan] Total:', map.size, 'posts');
       if (result.posts.length > 0) dbPutAll(result.posts);
     }
   } catch (e: any) { error = e.message || 'Failed'; }
@@ -49,7 +46,7 @@ async function refresh() {
 
 if (typeof window !== 'undefined') {
   dbGetAll().then(async cached => {
-    if (cached.length > 0) { allPosts = cached; await tick(); }
+    if (cached.length > 0) { allPosts = cached.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); await tick(); }
     refresh();
   });
   setInterval(refresh, 30_000);
