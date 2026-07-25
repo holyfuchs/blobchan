@@ -93,7 +93,8 @@
 			const client=createEphemeralClient(ephemeral.wallet, chain);
 			const hash=await sendBlobPost({client,chain,kzg,imageDataUrl:rimageData||undefined,post:postObj});
 			rhash=hash;const c=rcontent;const img=rimageData;const imn=rimageName;rcontent='';rimageData='';rimageName='';
-			store.addOptimistic({board:chain.id,threadId:id,id:hash.replace('0x',''),name:rname.trim()||'Anonymous',content:c.trim(),image:img||undefined,imageMime:img?dataUrlMime(img):undefined,imageName:img?imn:undefined,timestamp:Math.floor(Date.now()/1000)} as any);
+			const est=ephemeral.costEstimateFor(chain);
+			store.addOptimistic({board:chain.id,threadId:id,id:hash.replace('0x',''),name:rname.trim()||'Anonymous',content:c.trim(),image:img||undefined,imageMime:img?dataUrlMime(img):undefined,imageName:img?imn:undefined,timestamp:Math.floor(Date.now()/1000),txCost:est!==null?est.toString():undefined} as any);
 		}catch(e:any){rerror=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{rsending=false;}
 	}
 	function findBacklinks(pid: string): Post[] { const t=getThread();if(!t)return[];return t.replies.filter(r=>r.content.toLowerCase().includes('>>'+pid.slice(2,8).toLowerCase())); }

@@ -95,6 +95,19 @@ if (typeof window !== 'undefined' && wagmiAdapter) {
 	});
 	try { accountState = getAccount(wagmiAdapter.wagmiConfig); } catch {}
 }
+if (typeof window !== 'undefined') {
+	// Load cached ETH price immediately so the UI doesn't show '...' while
+	// the network fetch is in flight.
+	const cached = loadCachedEthPrice();
+	if (cached !== null) ethPriceUsd = cached;
+	// Fetch ETH price immediately on load (don't wait for the first balance
+	// poll). The cache check inside refreshEthPrice makes this near-instant
+	// when the cache is fresh.
+	refreshEthPrice();
+	// ETH price changes slowly — refresh every 5 minutes (matches cache TTL),
+	// not every 15 seconds with the balance poll.
+	setInterval(refreshEthPrice, 5 * 60 * 1000);
+}
 
 function refreshBalance(chain: ChainConfig) {
 	const w = ephemeralWallet;
@@ -112,7 +125,6 @@ function refreshAllBalances() {
 		refreshBalance(chain);
 		refreshCostEstimate(chain);
 	}
-	refreshEthPrice();
 }
 
 async function refreshCostEstimate(chain: ChainConfig) {
@@ -124,12 +136,43 @@ async function refreshCostEstimate(chain: ChainConfig) {
 	}
 }
 
-/** Fetch current ETH price in USD from Coingecko's free API (no key needed). */
-async function refreshEthPrice() {
+/** Fetch current ETH price in USD. Uses Coinbase's spot API (fast, no key,
+ *  no rate limits) with Coingecko as fallback. Result is cached in localStorage
+ *  for 5 minutes so repeated page loads don't re-fetch. */
+const ETH_PRICE_CACHE_KEY = 'blobchan_eth_price_usd';
+const ETH_PRICE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function loadCachedEthPrice(): number | null {
 	try {
+		const raw = localStorage.getItem(ETH_PRICE_CACHE_KEY);
+		if (!raw) return null;
+		const { price, ts } = JSON.parse(raw);
+		if (Date.now() - ts > ETH_PRICE_TTL_MS) return null; // stale
+		return typeof price === 'number' ? price : null;
+	} catch { return null; }
+}
+
+function saveCachedEthPrice(price: number) {
+	try { localStorage.setItem(ETH_PRICE_CACHE_KEY, JSON.stringify({ price, ts: Date.now() })); } catch {}
+}
+
+async function refreshEthPrice() {
+	// If we have a fresh cached price, use it and skip the network call.
+	const cached = loadCachedEthPrice();
+	if (cached !== null) { ethPriceUsd = cached; return; }
+	try {
+		// Coinbase's spot API — fast, reliable, no key, no rate limits.
+		const res = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot');
+		const data = await res.json();
+		const price = parseFloat(data?.data?.amount);
+		if (price > 0) { ethPriceUsd = price; saveCachedEthPrice(price); return; }
+	} catch {}
+	try {
+		// Fallback: Coingecko's free API.
 		const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
 		const data = await res.json();
-		ethPriceUsd = data?.ethereum?.usd ?? null;
+		const price = data?.ethereum?.usd;
+		if (typeof price === 'number' && price > 0) { ethPriceUsd = price; saveCachedEthPrice(price); }
 	} catch {
 		// leave the previous price in place
 	}

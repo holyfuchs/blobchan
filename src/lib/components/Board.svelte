@@ -68,7 +68,8 @@
 			const hash=await sendBlobPost({client,chain,kzg,imageDataUrl:imageData||undefined,post:postObj});
 			postHash=hash;
 			const c=content;const sb=subject;const n=name;const img=imageData;const imn=imageName;content='';subject='';imageData='';imageName='';
-			store.addOptimistic({board:chain.id,threadId:hash.replace('0x',''),id:hash.replace('0x',''),subject:sb.trim()||undefined,name:n.trim()||'Anonymous',content:c.trim(),image:img||undefined,imageMime:img?dataUrlMime(img):undefined,imageName:img?imn:undefined,timestamp:Math.floor(Date.now()/1000)} as any);
+			const est=ephemeral.costEstimateFor(chain);
+			store.addOptimistic({board:chain.id,threadId:hash.replace('0x',''),id:hash.replace('0x',''),subject:sb.trim()||undefined,name:n.trim()||'Anonymous',content:c.trim(),image:img||undefined,imageMime:img?dataUrlMime(img):undefined,imageName:img?imn:undefined,timestamp:Math.floor(Date.now()/1000),txCost:est!==null?est.toString():undefined} as any);
 		}catch(e:any){postError=e?.shortMessage||e?.message?.slice(0,200)||'Failed';}finally{sending=false;}
 	}
 	function openThread(id: string) { goto(`/${chain.id}/thread/${id}`); }
