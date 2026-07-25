@@ -12,6 +12,7 @@ html,
 body {
 	margin: 0;
 	padding: 0;
+	overflow-x: hidden; /* prevent horizontal scroll on mobile from wide content (nowrap headers, fixed-width inputs) — this also keeps the Reown modal's fixed overlay from breaking */
 }
 
 body {
@@ -21,30 +22,34 @@ body {
 	font-size: 10pt;
 }
 
-a,
-a:visited {
+/* All element selectors are scoped to .blobchan-app so they don't leak into
+   the Reown AppKit modal, which renders at <body> level outside our wrapper.
+   The modal's internal content is in shadow DOM, but the host element itself
+   and any light-dom children would inherit our global styles without this scoping. */
+.blobchan-app a,
+.blobchan-app a:visited {
 	color: #0000ee;
 	text-decoration: none;
 }
-a:hover {
+.blobchan-app a:hover {
 	color: #ff0000 !important;
 	background: inherit;
 }
 
-hr {
+.blobchan-app hr {
 	border: none;
 	border-top: 1px solid #d9bfb7;
 	height: 0;
 	clear: both;
 }
 
-img {
+.blobchan-app img {
 	border: none;
 }
 
-input[type='text'],
-input[type='password'],
-textarea {
+.blobchan-app input[type='text'],
+.blobchan-app input[type='password'],
+.blobchan-app textarea {
 	margin: 0;
 	margin-right: 2px;
 	padding: 2px 4px 3px 4px;
@@ -53,12 +58,12 @@ textarea {
 	font-family: arial, helvetica, sans-serif;
 	font-size: 10pt;
 }
-input[type='text']:focus,
-input[type='password']:focus,
-textarea:focus {
+.blobchan-app input[type='text']:focus,
+.blobchan-app input[type='password']:focus,
+.blobchan-app textarea:focus {
 	border: 1px solid #eeaa88 !important;
 }
-select {
+.blobchan-app select {
 	font-family: arial, helvetica, sans-serif;
 	font-size: 10pt;
 	border: 1px solid #aaaaaa;
@@ -67,7 +72,7 @@ select {
 
 /* blobchan header (wallet bar) */
 .blobchan-header,
-header {
+.blobchan-app header {
 	margin: 0;
 	background: #f0e0d6;
 	border-bottom: 1px solid #d9bfb7;
@@ -137,7 +142,7 @@ header {
 	font-size: x-small;
 	color: #800000;
 }
-hr.abovePostForm {
+.blobchan-app hr.abovePostForm {
 	width: 90%;
 }
 
@@ -189,7 +194,7 @@ hr.abovePostForm {
 	display: inline-block; /* shrink-to-fit the reply box to the width of the image+body row */
 	padding: 2px 4px;
 	max-width: 95%;
-	margin: 1px 0 1px 20px;
+	margin: 1px 0;
 }
 .post.reply .fileText {
 	display: block; /* normal block above the flex row; wraps if the filename is long instead of stretching the box */
@@ -267,13 +272,19 @@ hr.abovePostForm {
 }
 
 /* Post message */
-blockquote.postMessage {
+.blobchan-app blockquote.postMessage {
 	display: block;
 	margin-top: 2px;
 	line-height: 1.4;
 	word-wrap: break-word;
 	overflow-wrap: break-word;
 	white-space: pre-wrap;
+}
+/* OP message: when there's no image, add a small left buffer so the text
+   isn't flush against the screen edge. When there is an image, the floated
+   image already pushes the text right, so no extra margin needed. */
+.post.op:not(:has(.fileThumb)) blockquote.postMessage {
+	margin-left: 10px;
 }
 .postMessage .quotelink {
 	color: #000080 !important;
@@ -582,14 +593,38 @@ table.postForm textarea {
 @media only screen and (max-width: 640px) {
 	.post.reply {
 		max-width: 95%;
-		margin-left: 8px;
+		margin-left: 0;
 	}
-		.blobchan-logo { font-size: 16px; }
+	.blobchan-logo { font-size: 16px; }
+	/* Allow the post header line to wrap on mobile instead of overflowing the
+	   viewport with nowrap. The header has name + date + No + countdown + tx cost
+	   which is too wide for most phones on one line. */
+	.postInfo {
+		white-space: normal;
 	}
+	/* Form inputs: shrink from fixed 244/300px to fit narrow screens. */
+	table.postForm input[type='text'] {
+		width: 100%;
+		max-width: 244px;
+	}
+	table.postForm input[name='subject'] {
+		width: 100%;
+		max-width: 300px;
+	}
+	table.postForm textarea {
+		width: 100%;
+		max-width: 300px;
+	}
+	/* OP image: shrink from 200px to fit small screens. */
+	.post.op .fileThumb img {
+		max-width: 150px !important;
+		max-height: 150px !important;
+	}
+}
 
-	.toggle-link {
-		background: none; border: none; color: #0000EE;
-		font-family: arial, helvetica, sans-serif; font-size: 10pt;
-		font-weight: bold; cursor: pointer; padding: 0;
-	}
-	.toggle-link:hover { color: #FF0000 !important; }
+.toggle-link {
+	background: none; border: none; color: #0000EE;
+	font-family: arial, helvetica, sans-serif; font-size: 10pt;
+	font-weight: bold; cursor: pointer; padding: 0;
+}
+.toggle-link:hover { color: #FF0000 !important; }

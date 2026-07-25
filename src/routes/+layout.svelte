@@ -39,7 +39,8 @@
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
-<header class="blobchan-header">
+<div class="blobchan-app">
+	<header class="blobchan-header">
 	<a href="/" class="blobchan-logo">blobchan</a>
 	<div class="header-right">
 		<button class="nsfw-btn" onclick={nsfw.toggle}>
@@ -76,7 +77,8 @@
 
 {@render children()}
 
-<footer class="blobchan-footer">blobchan — posts stored on-chain via EIP-4844 blobs</footer>
+	<footer class="blobchan-footer">blobchan — posts stored on-chain via EIP-4844 blobs</footer>
+</div>
 
 <style>
 	.header-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
